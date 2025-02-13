@@ -1,5 +1,12 @@
-#[derive(Debug, PartialEq)]
-pub enum Token {
+#[derive(Clone, Debug, PartialEq)]
+pub struct Token {
+    pub kind: TokenKind,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TokenKind {
     ParenLeft,
     ParenRight,
     BracketLeft,
@@ -25,55 +32,75 @@ pub enum Token {
     Float(f64),
     String(String),
     Character(char),
+    // Keywords
+    Var,
+    Func,
+    Print,
+    Return,
+    If,
+    Else,
+    While,
+    For,
+    Break,
+    Continue,
+    True,
+    False,
 }
 
 pub fn tokenize(src: &str) -> Vec<Token> {
     let mut chars = src.chars().peekable();
     let mut tokens = Vec::<Token>::new();
+    let mut line: usize = 1;
+    let mut column: usize = 1;
 
-    while chars.peek().is_some() {
-        let c = chars.next().unwrap();
+    while let Some(c) = chars.next() {
+        let start_column = column;
+        let kind;
         match c {
-            '(' => tokens.push(Token::ParenLeft),
-            ')' => tokens.push(Token::ParenRight),
-            '[' => tokens.push(Token::BracketLeft),
-            ']' => tokens.push(Token::BracketRight),
-            '{' => tokens.push(Token::BraceLeft),
-            '}' => tokens.push(Token::BraceRight),
+            '(' => kind = TokenKind::ParenLeft,
+            ')' => kind = TokenKind::ParenRight,
+            '[' => kind = TokenKind::BracketLeft,
+            ']' => kind = TokenKind::BracketRight,
+            '{' => kind = TokenKind::BraceLeft,
+            '}' => kind = TokenKind::BraceRight,
             '=' => match chars.peek() {
                 Some(&'=') => {
                     let _ = chars.next();
-                    tokens.push(Token::EqualEqual);
+                    column += 1;
+                    kind = TokenKind::EqualEqual;
                 }
-                _ => tokens.push(Token::Equal),
+                _ => kind = TokenKind::Equal,
             },
             '!' => match chars.peek() {
                 Some(&'=') => {
                     let _ = chars.next();
-                    tokens.push(Token::BangEqual);
+                    column += 1;
+                    kind = TokenKind::BangEqual;
                 }
-                _ => tokens.push(Token::Bang),
+                _ => kind = TokenKind::Bang,
             },
             '<' => match chars.peek() {
                 Some(&'=') => {
                     let _ = chars.next();
-                    tokens.push(Token::LessEqual);
+                    column += 1;
+                    kind = TokenKind::LessEqual;
                 }
-                _ => tokens.push(Token::Less),
+                _ => kind = TokenKind::Less,
             },
             '>' => match chars.peek() {
                 Some(&'=') => {
                     let _ = chars.next();
-                    tokens.push(Token::GreaterEqual);
+                    column += 1;
+                    kind = TokenKind::GreaterEqual;
                 }
-                _ => tokens.push(Token::Greater),
+                _ => kind = TokenKind::Greater,
             },
-            '+' => tokens.push(Token::Plus),
-            '-' => tokens.push(Token::Minus),
-            '*' => tokens.push(Token::Star),
-            '/' => tokens.push(Token::Slash),
-            ',' => tokens.push(Token::Comma),
-            ';' => tokens.push(Token::SemiColon),
+            '+' => kind = TokenKind::Plus,
+            '-' => kind = TokenKind::Minus,
+            '*' => kind = TokenKind::Star,
+            '/' => kind = TokenKind::Slash,
+            ',' => kind = TokenKind::Comma,
+            ';' => kind = TokenKind::SemiColon,
             'a'..='z' | 'A'..='Z' | '_' => {
                 let mut ident = String::new();
                 ident.push(c);
@@ -81,11 +108,26 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                     match c {
                         'a'..='z' | 'A'..='Z' | '_' | '0'..='9' => {
                             ident.push(chars.next().unwrap());
+                            column += 1;
                         }
                         _ => break,
                     }
                 }
-                tokens.push(Token::Identifier(ident));
+                match ident.as_str() {
+                    "var" => kind = TokenKind::Var,
+                    "func" => kind = TokenKind::Func,
+                    "print" => kind = TokenKind::Print,
+                    "return" => kind = TokenKind::Return,
+                    "if" => kind = TokenKind::If,
+                    "else" => kind = TokenKind::Else,
+                    "while" => kind = TokenKind::While,
+                    "for" => kind = TokenKind::For,
+                    "break" => kind = TokenKind::Break,
+                    "continue" => kind = TokenKind::Continue,
+                    "true" => kind = TokenKind::True,
+                    "false" => kind = TokenKind::False,
+                    _ => kind = TokenKind::Identifier(ident),
+                }
             }
             '0'..='9' => {
                 let mut num = String::new();
@@ -94,13 +136,16 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                     match c {
                         '0'..='9' => {
                             num.push(chars.next().unwrap());
+                            column += 1;
                         }
                         '.' => {
                             num.push(chars.next().unwrap());
+                            column += 1;
                             while let Some(&c) = chars.peek() {
                                 match c {
                                     '0'..='9' => {
                                         num.push(chars.next().unwrap());
+                                        column += 1;
                                     }
                                     _ => break,
                                 }
@@ -111,9 +156,9 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                     }
                 }
                 if num.contains('.') {
-                    tokens.push(Token::Float(num.parse().unwrap()));
+                    kind = TokenKind::Float(num.parse().unwrap());
                 } else {
-                    tokens.push(Token::Integer(num.parse().unwrap()));
+                    kind = TokenKind::Integer(num.parse().unwrap());
                 }
             }
             '"' => {
@@ -122,10 +167,12 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                     match c {
                         '"' => {
                             chars.next();
+                            column += 1;
                             break;
                         }
                         '\\' => {
                             chars.next();
+                            column += 1;
                             match chars.next().unwrap() {
                                 'n' => string.push('\n'),
                                 'r' => string.push('\r'),
@@ -134,24 +181,44 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                                 '"' => string.push('"'),
                                 _ => panic!("Unknown escape character: {}", c),
                             }
+                            column += 1;
                         }
                         _ => {
                             string.push(chars.next().unwrap());
+                            column += 1;
                         }
                     }
                 }
-                tokens.push(Token::String(string));
+                kind = TokenKind::String(string);
             }
             '\'' => {
                 let c = chars.next().unwrap();
+                column += 1;
                 let _ = chars.next().unwrap();
-                tokens.push(Token::Character(c));
+                column += 1;
+                kind = TokenKind::Character(c);
             }
-            ' ' | '\n' | '\r' | '\t' => {}
+            '\n' => {
+                line += 1;
+                column = 1;
+                continue;
+            }
+            ' ' | '\r' | '\t' => {
+                column += 1;
+                continue;
+            }
             _ => {
                 panic!("Untokenizable character: {}", c);
             }
         }
+
+        tokens.push(Token {
+            kind,
+            line,
+            column: start_column,
+        });
+
+        column += 1;
     }
 
     tokens
