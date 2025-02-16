@@ -1,6 +1,7 @@
 use std::{env, fs};
 
 mod tokenizer;
+mod parser;
 
 fn main() {
     println!("Hello, world!");
@@ -18,4 +19,8 @@ fn main() {
     let tokens = tokenizer::tokenize(&contents);
 
     dbg!(&tokens);
+
+    let ast = parser::parse(tokens);
+
+    dbg!(&ast);
 }
