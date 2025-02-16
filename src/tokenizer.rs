@@ -35,7 +35,6 @@ pub enum TokenKind {
     // Keywords
     Var,
     Func,
-    Print,
     Return,
     If,
     Else,
@@ -45,6 +44,7 @@ pub enum TokenKind {
     Continue,
     True,
     False,
+    Null,
 }
 
 pub fn tokenize(src: &str) -> Vec<Token> {
@@ -116,7 +116,6 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                 match ident.as_str() {
                     "var" => kind = TokenKind::Var,
                     "func" => kind = TokenKind::Func,
-                    "print" => kind = TokenKind::Print,
                     "return" => kind = TokenKind::Return,
                     "if" => kind = TokenKind::If,
                     "else" => kind = TokenKind::Else,
@@ -126,6 +125,7 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                     "continue" => kind = TokenKind::Continue,
                     "true" => kind = TokenKind::True,
                     "false" => kind = TokenKind::False,
+                    "null" => kind = TokenKind::Null,
                     _ => kind = TokenKind::Identifier(ident),
                 }
             }
@@ -205,6 +205,16 @@ pub fn tokenize(src: &str) -> Vec<Token> {
             }
             ' ' | '\r' | '\t' => {
                 column += 1;
+                continue;
+            }
+            '#' => {
+                while let Some(&c) = chars.peek() {
+                    if c == '\n' {
+                        break;
+                    }
+                    chars.next();
+                    column += 1;
+                }
                 continue;
             }
             _ => {
