@@ -1,29 +1,36 @@
-use crate::tokenizer::{Token, TokenKind};
+use crate::tokenizer::{Position, Token, TokenKind};
 
 #[derive(Debug)]
 pub struct Ast {
     pub expressions: Vec<Expression>,
 }
 
-#[derive(Debug)]
-pub enum Expression {
+#[derive(Debug, Clone)]
+pub struct Expression {
+    pub kind: ExpressionKind,
+    pub position: Position,
+}
+
+#[derive(Debug, Clone)]
+pub enum ExpressionKind {
     Float(f64),
     Integer(i64),
     String(String),
     Character(char),
     Boolean(bool),
     Variable(String),
+    List(Vec<Expression>),
     Unary {
-        operator: BinaryOperator,
+        operator: Operator,
         right: Box<Expression>,
     },
     Binary {
         left: Box<Expression>,
-        operator: BinaryOperator,
+        operator: Operator,
         right: Box<Expression>,
     },
     Grouping(Box<Expression>),
-    VariableDeclaration {
+    VariableDefinition {
         name: String,
         initializer: Box<Option<Expression>>,
     },
@@ -31,8 +38,13 @@ pub enum Expression {
         name: String,
         value: Box<Expression>,
     },
-    FunctionCall {
+    FunctionDefinition {
         name: String,
+        parameters: Vec<String>,
+        body: Box<Expression>,
+    },
+    FunctionCall {
+        callee: Box<Expression>,
         arguments: Vec<Expression>,
     },
     Block {
@@ -63,106 +75,267 @@ pub enum Expression {
     Continue {
         value: Box<Option<Expression>>,
     },
+    ListIndex {
+        list: Box<Expression>,
+        index: Box<Expression>,
+    },
+    Import(String),
 }
 
-#[derive(Debug)]
-pub enum BinaryOperator {
+#[derive(Debug, Clone, Copy)]
+pub enum Operator {
+    BangEqual,
+    EqualEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
     Plus,
     Minus,
     Star,
     Slash,
-    Greater,
-    GreaterEqual,
-    Less,
-    LessEqual,
-    BangEqual,
-    EqualEqual,
+    Bang,
+    MinusUnary,
+    Index,
+    Call,
 }
 
-fn get_operator(token: &Token) -> Option<BinaryOperator> {
-    match token.kind {
-        TokenKind::Plus => Some(BinaryOperator::Plus),
-        TokenKind::Minus => Some(BinaryOperator::Minus),
-        TokenKind::Star => Some(BinaryOperator::Star),
-        TokenKind::Slash => Some(BinaryOperator::Slash),
-        TokenKind::Greater => Some(BinaryOperator::Greater),
-        TokenKind::GreaterEqual => Some(BinaryOperator::GreaterEqual),
-        TokenKind::Less => Some(BinaryOperator::Less),
-        TokenKind::LessEqual => Some(BinaryOperator::LessEqual),
-        TokenKind::BangEqual => Some(BinaryOperator::BangEqual),
-        TokenKind::EqualEqual => Some(BinaryOperator::EqualEqual),
-        _ => None,
-    }
-}
-
-#[derive(Debug, PartialEq, PartialOrd)]
-pub enum OperatorPrecedence {
+#[derive(Debug, PartialEq, PartialOrd, Clone)]
+enum OperatorPrecedence {
     Equality,
     Comparative,
     Additive,
     Multiplicative,
+    Prefix,
+    Postfix,
 }
 
-fn get_precedence(operator: &BinaryOperator) -> OperatorPrecedence {
+#[derive(Debug, PartialEq)]
+enum OperatorAssociativity {
+    Left,
+    Right,
+}
+
+fn get_operator(token: &Token, prefix: bool) -> Option<Operator> {
+    match token.kind {
+        TokenKind::BangEqual => Some(Operator::BangEqual),
+        TokenKind::EqualEqual => Some(Operator::EqualEqual),
+        TokenKind::Less => Some(Operator::Less),
+        TokenKind::LessEqual => Some(Operator::LessEqual),
+        TokenKind::Greater => Some(Operator::Greater),
+        TokenKind::GreaterEqual => Some(Operator::GreaterEqual),
+        TokenKind::Plus => Some(Operator::Plus),
+        TokenKind::Minus => {
+            if prefix {
+                Some(Operator::MinusUnary)
+            } else {
+                Some(Operator::Minus)
+            }
+        }
+        TokenKind::Star => Some(Operator::Star),
+        TokenKind::Slash => Some(Operator::Slash),
+        TokenKind::Bang => Some(Operator::Bang),
+        TokenKind::BracketLeft => {
+            if prefix {
+                None
+            } else {
+                Some(Operator::Index)
+            }
+        }
+        TokenKind::ParenLeft => {
+            if prefix {
+                None
+            } else {
+                Some(Operator::Call)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn is_prefix_operator(operator: &Operator) -> bool {
     match operator {
-        BinaryOperator::Plus | BinaryOperator::Minus => OperatorPrecedence::Additive,
-        BinaryOperator::Star | BinaryOperator::Slash => OperatorPrecedence::Multiplicative,
-        BinaryOperator::Greater
-        | BinaryOperator::GreaterEqual
-        | BinaryOperator::Less
-        | BinaryOperator::LessEqual => OperatorPrecedence::Comparative,
-        BinaryOperator::BangEqual | BinaryOperator::EqualEqual => OperatorPrecedence::Equality,
+        Operator::Bang | Operator::MinusUnary => true,
+        _ => false,
+    }
+}
+
+fn is_infix_operator(operator: &Operator) -> bool {
+    match operator {
+        Operator::BangEqual
+        | Operator::EqualEqual
+        | Operator::Less
+        | Operator::LessEqual
+        | Operator::Greater
+        | Operator::GreaterEqual
+        | Operator::Plus
+        | Operator::Minus
+        | Operator::Star
+        | Operator::Slash => true,
+        _ => false,
+    }
+}
+
+fn is_postfix_operator(operator: &Operator) -> bool {
+    match operator {
+        Operator::Index | Operator::Call => true,
+        _ => false,
+    }
+}
+
+fn get_precedence(operator: &Operator) -> OperatorPrecedence {
+    match operator {
+        Operator::BangEqual | Operator::EqualEqual => OperatorPrecedence::Equality,
+        Operator::Less | Operator::LessEqual | Operator::Greater | Operator::GreaterEqual => {
+            OperatorPrecedence::Comparative
+        }
+        Operator::Plus | Operator::Minus => OperatorPrecedence::Additive,
+        Operator::Star | Operator::Slash => OperatorPrecedence::Multiplicative,
+        Operator::Bang | Operator::MinusUnary => OperatorPrecedence::Prefix,
+        Operator::Index | Operator::Call => OperatorPrecedence::Postfix,
+    }
+}
+
+fn next_precedence(precedence: OperatorPrecedence) -> OperatorPrecedence {
+    match precedence {
+        OperatorPrecedence::Equality => OperatorPrecedence::Comparative,
+        OperatorPrecedence::Comparative => OperatorPrecedence::Additive,
+        OperatorPrecedence::Additive => OperatorPrecedence::Multiplicative,
+        OperatorPrecedence::Multiplicative => OperatorPrecedence::Prefix,
+        OperatorPrecedence::Prefix => OperatorPrecedence::Postfix,
+        OperatorPrecedence::Postfix => panic!("No next precedence for postfix operators"),
+    }
+}
+
+fn get_associativity(operator: &Operator) -> OperatorAssociativity {
+    match operator {
+        Operator::BangEqual
+        | Operator::EqualEqual
+        | Operator::Less
+        | Operator::LessEqual
+        | Operator::Greater
+        | Operator::GreaterEqual
+        | Operator::Plus
+        | Operator::Minus
+        | Operator::Star
+        | Operator::Slash => OperatorAssociativity::Left,
+        Operator::Bang | Operator::MinusUnary | Operator::Index | Operator::Call => {
+            OperatorAssociativity::Right
+        }
     }
 }
 
 type Tokens = std::iter::Peekable<std::vec::IntoIter<Token>>;
 
-// Operator precedence parsing
-fn parse_expression(tokens: &mut Tokens) -> Expression {
-    let lhs = parse_primary(tokens);
-    parse_expression_1(tokens, lhs, OperatorPrecedence::Equality)
+fn panic_unexpected_token(token: &Token, expected: &str) {
+    panic!(
+        "Unexpected token: {:?} on {}:{}, expected {}",
+        token.kind, token.position.line, token.position.column, expected
+    );
 }
 
-fn parse_expression_1(
-    tokens: &mut Tokens,
-    lhs: Expression,
-    min_precedence: OperatorPrecedence,
-) -> Expression {
-    let mut lhs = lhs;
+// Operator precedence parsing
+fn parse_expression(tokens: &mut Tokens) -> Expression {
+    parse_expression_1(tokens, OperatorPrecedence::Equality)
+}
+
+fn parse_expression_1(tokens: &mut Tokens, min_precedence: OperatorPrecedence) -> Expression {
+    let mut lhs = match tokens.peek() {
+        Some(token) => {
+            if let Some(operator) = get_operator(token, true) {
+                if is_prefix_operator(&operator) {
+                    let token = tokens.next().unwrap();
+                    let right = Box::new(parse_expression_1(tokens, get_precedence(&operator)));
+                    Expression {
+                        kind: ExpressionKind::Unary { operator, right },
+                        position: token.position,
+                    }
+                } else {
+                    panic_unexpected_token(token, "prefix operator");
+                    panic!();
+                }
+            } else {
+                parse_primary(tokens)
+            }
+        }
+        None => {
+            panic!("Unexpected end of input");
+        }
+    };
 
     while let Some(token) = tokens.peek() {
-        let operator = get_operator(token);
-        if operator.is_none() {
-            break;
+        match get_operator(token, false) {
+            Some(operator) => match operator {
+                operator if is_postfix_operator(&operator) => match operator {
+                    Operator::Index => {
+                        let token = tokens.next().unwrap();
+                        let index = parse_expression(tokens);
+                        expect_token(tokens, TokenKind::BracketRight);
+                        lhs = Expression {
+                            kind: ExpressionKind::ListIndex {
+                                list: Box::new(lhs),
+                                index: Box::new(index),
+                            },
+                            position: token.position,
+                        };
+                    }
+                    Operator::Call => {
+                        let token = tokens.next().unwrap();
+                        let arguments = parse_expression_list_until(
+                            tokens,
+                            TokenKind::Comma,
+                            TokenKind::ParenRight,
+                        );
+                        expect_token(tokens, TokenKind::ParenRight);
+                        lhs = Expression {
+                            kind: ExpressionKind::FunctionCall {
+                                callee: Box::new(lhs),
+                                arguments,
+                            },
+                            position: token.position,
+                        };
+                    }
+                    _ => panic_unexpected_token(token, "postfix operator"),
+                },
+                operator if is_infix_operator(&operator) => {
+                    let precedence = get_precedence(&operator);
+                    if precedence < min_precedence {
+                        break;
+                    }
+                    let token = tokens.next().unwrap();
+                    let right_precedence =
+                        if get_associativity(&operator) == OperatorAssociativity::Left {
+                            next_precedence(precedence.clone())
+                        } else {
+                            precedence.clone()
+                        };
+                    let mut rhs = parse_expression_1(tokens, right_precedence);
+                    while let Some(token) = tokens.peek() {
+                        let next_operator = get_operator(token, false);
+                        if next_operator.is_none() {
+                            break;
+                        }
+                        let next_operator = next_operator.unwrap();
+                        let next_precedence = get_precedence(&next_operator);
+                        if next_precedence > precedence {
+                            rhs = parse_expression_1(tokens, next_precedence);
+                        } else {
+                            break;
+                        }
+                    }
+                    lhs = Expression {
+                        kind: ExpressionKind::Binary {
+                            left: Box::new(lhs),
+                            operator,
+                            right: Box::new(rhs),
+                        },
+                        position: token.position,
+                    };
+                }
+                _ => break,
+            },
+            None => break,
         }
-        let operator = operator.unwrap();
-        let precedence = get_precedence(&operator);
-        if precedence < min_precedence {
-            break;
-        }
-        tokens.next();
-
-        let mut rhs = parse_primary(tokens);
-
-        while let Some(token) = tokens.peek() {
-            let next_operator = get_operator(&token);
-            if next_operator.is_none() {
-                break;
-            }
-            let next_operator = next_operator.unwrap();
-            let next_precedence = get_precedence(&next_operator);
-            if next_precedence > precedence {
-                rhs = parse_expression_1(tokens, rhs, next_precedence);
-            } else {
-                break;
-            }
-        }
-
-        lhs = Expression::Binary {
-            left: Box::new(lhs),
-            operator,
-            right: Box::new(rhs),
-        };
     }
 
     lhs
@@ -171,121 +344,132 @@ fn parse_expression_1(
 fn parse_primary(tokens: &mut Tokens) -> Expression {
     let token = tokens.next().unwrap();
     match token.kind {
-        TokenKind::Float(f) => Expression::Float(f),
-        TokenKind::Integer(i) => Expression::Integer(i),
-        TokenKind::String(s) => Expression::String(s),
-        TokenKind::Character(c) => Expression::Character(c),
-        TokenKind::True => Expression::Boolean(true),
-        TokenKind::False => Expression::Boolean(false),
+        TokenKind::Float(f) => Expression {
+            kind: ExpressionKind::Float(f),
+            position: token.position,
+        },
+        TokenKind::Integer(i) => Expression {
+            kind: ExpressionKind::Integer(i),
+            position: token.position,
+        },
+        TokenKind::String(s) => Expression {
+            kind: ExpressionKind::String(s),
+            position: token.position,
+        },
+        TokenKind::Character(c) => Expression {
+            kind: ExpressionKind::Character(c),
+            position: token.position,
+        },
+        TokenKind::True => Expression {
+            kind: ExpressionKind::Boolean(true),
+            position: token.position,
+        },
+        TokenKind::False => Expression {
+            kind: ExpressionKind::Boolean(false),
+            position: token.position,
+        },
         TokenKind::Identifier(name) => match tokens.peek() {
-            Some(&Token {
-                kind: TokenKind::ParenLeft,
-                ..
-            }) => {
-                tokens.next();
-                let arguments = parse_argument_list(tokens);
-                Expression::FunctionCall { name, arguments }
-            }
             Some(&Token {
                 kind: TokenKind::Equal,
                 ..
             }) => {
-                tokens.next();
+                expect_token(tokens, TokenKind::Equal);
                 let value = parse_expression(tokens);
-                Expression::Assignment {
-                    name,
-                    value: Box::new(value),
+                Expression {
+                    kind: ExpressionKind::Assignment {
+                        name,
+                        value: Box::new(value),
+                    },
+                    position: token.position,
                 }
             }
-            _ => Expression::Variable(name),
+            _ => Expression {
+                kind: ExpressionKind::Variable(name),
+                position: token.position,
+            },
         },
         TokenKind::ParenLeft => {
             let expr = parse_expression(tokens);
-            if let Some(&Token {
-                kind: TokenKind::ParenRight,
-                ..
-            }) = tokens.peek()
-            {
-                tokens.next();
-            } else {
-                panic!("Unexpected token {:?} Expected )", tokens.next().unwrap());
+            expect_token(tokens, TokenKind::ParenRight);
+            Expression {
+                kind: ExpressionKind::Grouping(Box::new(expr)),
+                position: token.position,
             }
-            Expression::Grouping(Box::new(expr))
         }
-        TokenKind::Var => parse_variable_declaration(tokens),
-        TokenKind::Bang | TokenKind::Minus => {
-            let operator = get_operator(&token).unwrap();
-            let right = Box::new(parse_primary(tokens));
-            Expression::Unary { operator, right }
+        TokenKind::BracketLeft => {
+            let elements =
+                parse_expression_list_until(tokens, TokenKind::Comma, TokenKind::BracketRight);
+            expect_token(tokens, TokenKind::BracketRight);
+            Expression {
+                kind: ExpressionKind::List(elements),
+                position: token.position,
+            }
         }
-        TokenKind::If => parse_if(tokens),
-        TokenKind::While => parse_while(tokens),
-        TokenKind::For => parse_for(tokens),
+        TokenKind::Var => parse_variable_definition(tokens, token.position),
+        TokenKind::Func => parse_function_definition(tokens, token.position),
+        TokenKind::If => parse_if(tokens, token.position),
+        TokenKind::While => parse_while(tokens, token.position),
+        TokenKind::For => parse_for(tokens, token.position),
         TokenKind::BraceLeft => {
-            let mut expressions = Vec::<Expression>::new();
-            while let Some(token) = tokens.peek() {
-                match token.kind {
-                    TokenKind::BraceRight => {
-                        tokens.next();
-                        break;
-                    }
-                    _ => {
-                        expressions.push(parse_expression(tokens));
-                        match tokens.peek() {
-                            Some(&Token {
-                                kind: TokenKind::SemiColon,
-                                ..
-                            }) => {
-                                tokens.next();
-                            }
-                            _ => {}
-                        }
-                    }
+            let expressions =
+                parse_expression_list_until(tokens, TokenKind::SemiColon, TokenKind::BraceRight);
+            expect_token(tokens, TokenKind::BraceRight);
+            Expression {
+                kind: ExpressionKind::Block { expressions },
+                position: token.position,
+            }
+        }
+        TokenKind::Return => Expression {
+            kind: ExpressionKind::Return {
+                value: Box::new(parse_optional_expression(tokens)),
+            },
+            position: token.position,
+        },
+
+        TokenKind::Break => Expression {
+            kind: ExpressionKind::Break {
+                value: Box::new(parse_optional_expression(tokens)),
+            },
+            position: token.position,
+        },
+
+        TokenKind::Continue => Expression {
+            kind: ExpressionKind::Continue {
+                value: Box::new(parse_optional_expression(tokens)),
+            },
+            position: token.position,
+        },
+        TokenKind::Import => {
+            let path = match expect_token(tokens, TokenKind::String(String::new())).kind {
+                TokenKind::String(path) => path,
+                kind => {
+                    panic_unexpected_token(&Token { kind, position: token.position }, "string");
+                    panic!();
                 }
-            }
-            Expression::Block { expressions }
-        }
-        TokenKind::Return => {
-            let value = parse_optional_expression(tokens);
-            Expression::Return {
-                value: Box::new(value),
+            };
+            Expression {
+                kind: ExpressionKind::Import(path),
+                position: token.position,
             }
         }
-        TokenKind::Break => {
-            let value = parse_optional_expression(tokens);
-            Expression::Break {
-                value: Box::new(value),
-            }
+        _ => {
+            panic_unexpected_token(&token, "start of primary expression");
+            panic!();
         }
-        TokenKind::Continue => {
-            let value = parse_optional_expression(tokens);
-            Expression::Continue {
-                value: Box::new(value),
-            }
-        }
-        _ => panic!("Unexpected token: {:?}", token),
     }
 }
 
-fn parse_argument_list(tokens: &mut Tokens) -> Vec<Expression> {
-    let mut arguments = Vec::<Expression>::new();
-
-    while let Some(token) = tokens.peek() {
-        match token.kind {
-            TokenKind::ParenRight => {
-                tokens.next();
-                break;
+fn expect_token(tokens: &mut Tokens, expected: TokenKind) -> Token {
+    match tokens.next() {
+        Some(token) => {
+            // std::mem::discriminant is used to compare enum variants without comparing their data
+            if std::mem::discriminant(&token.kind) != std::mem::discriminant(&expected) {
+                panic_unexpected_token(&token, format!("{:?}", expected).as_str());
             }
-            TokenKind::Comma => {
-                tokens.next();
-            }
-            _ => {
-                arguments.push(parse_expression(tokens));
-            }
+            token
         }
+        None => panic!("Unexpected end of input"),
     }
-
-    arguments
 }
 
 fn parse_optional_expression(tokens: &mut Tokens) -> Option<Expression> {
@@ -298,11 +482,40 @@ fn parse_optional_expression(tokens: &mut Tokens) -> Option<Expression> {
     }
 }
 
-fn parse_variable_declaration(tokens: &mut Tokens) -> Expression {
-    let name = match tokens.next().unwrap().kind {
-        TokenKind::Identifier(s) => s,
-        _ => panic!("Expected identifier"),
+fn parse_expression_list_until(
+    tokens: &mut Tokens,
+    separator: TokenKind,
+    end: TokenKind,
+) -> Vec<Expression> {
+    let mut expressions = Vec::<Expression>::new();
+    let mut closed = false;
+
+    while let Some(token) = tokens.peek() {
+        if token.kind == end {
+            closed = true;
+            break;
+        } else if token.kind == separator {
+            tokens.next();
+        } else {
+            expressions.push(parse_expression(tokens));
+        }
+    }
+    if closed == false && tokens.peek().is_none() {
+        panic!("Unexpected end of input, expected {:?}", end);
+    }
+
+    expressions
+}
+
+fn parse_variable_definition(tokens: &mut Tokens, position: Position) -> Expression {
+    let name = match expect_token(tokens, TokenKind::Identifier(String::new())).kind {
+        TokenKind::Identifier(name) => name,
+        kind => {
+            panic_unexpected_token(&Token { kind, position }, "identifier");
+            panic!();
+        }
     };
+
     let initializer = if let Some(&Token {
         kind: TokenKind::Equal,
         ..
@@ -313,13 +526,59 @@ fn parse_variable_declaration(tokens: &mut Tokens) -> Expression {
     } else {
         None
     };
-    Expression::VariableDeclaration {
-        name,
-        initializer: Box::new(initializer),
+
+    Expression {
+        kind: ExpressionKind::VariableDefinition {
+            name,
+            initializer: Box::new(initializer),
+        },
+        position,
     }
 }
 
-fn parse_if(tokens: &mut Tokens) -> Expression {
+fn parse_function_definition(tokens: &mut Tokens, position: Position) -> Expression {
+    let name = match expect_token(tokens, TokenKind::Identifier(String::new())).kind {
+        TokenKind::Identifier(name) => name,
+        kind => {
+            panic_unexpected_token(&Token { kind, position }, "identifier");
+            panic!();
+        }
+    };
+
+    expect_token(tokens, TokenKind::ParenLeft);
+    let mut parameters = Vec::<String>::new();
+    while let Some(token) = tokens.peek() {
+        match &token.kind {
+            TokenKind::ParenRight => {
+                tokens.next();
+                break;
+            }
+            TokenKind::Comma => {
+                tokens.next();
+            }
+            TokenKind::Identifier(name) => {
+                parameters.push(name.to_owned());
+                tokens.next();
+            }
+            _ => {
+                panic_unexpected_token(token, "identifier");
+                panic!()
+            }
+        }
+    }
+
+    let body = Box::new(parse_expression(tokens));
+    Expression {
+        kind: ExpressionKind::FunctionDefinition {
+            name,
+            parameters,
+            body,
+        },
+        position,
+    }
+}
+
+fn parse_if(tokens: &mut Tokens, position: Position) -> Expression {
     let condition = Box::new(parse_expression(tokens));
     let then_branch = Box::new(parse_expression(tokens));
     let mut else_branch = Box::new(None);
@@ -330,75 +589,62 @@ fn parse_if(tokens: &mut Tokens) -> Expression {
         ..
     }) = tokens.peek()
     {
-        tokens.next();
+        expect_token(tokens, TokenKind::Else);
         match tokens.peek() {
             Some(&Token {
                 kind: TokenKind::If,
                 ..
             }) => {
-                tokens.next();
+                expect_token(tokens, TokenKind::If);
                 let condition = parse_expression(tokens);
                 let body = parse_expression(tokens);
                 elseif_branches.push((condition, body));
             }
             Some(_) => {
                 else_branch = Box::new(Some(parse_expression(tokens)));
-            },
-            _ => {panic!("Expected if or expression")}
+            }
+            None => panic!("Unexpected end of input"),
         }
     }
 
-    Expression::If {
-        condition,
-        then_branch,
-        elseif_branches,
-        else_branch,
+    Expression {
+        kind: ExpressionKind::If {
+            condition,
+            then_branch,
+            elseif_branches,
+            else_branch,
+        },
+        position,
     }
 }
 
-fn parse_while(tokens: &mut Tokens) -> Expression {
+fn parse_while(tokens: &mut Tokens, position: Position) -> Expression {
     let condition = Box::new(parse_expression(tokens));
     let body = Box::new(parse_expression(tokens));
-    Expression::While { condition, body }
+    Expression {
+        kind: ExpressionKind::While { condition, body },
+        position,
+    }
 }
 
-fn parse_for(tokens: &mut Tokens) -> Expression {
+fn parse_for(tokens: &mut Tokens, position: Position) -> Expression {
+    expect_token(tokens, TokenKind::ParenLeft);
     let initializer = Box::new(parse_expression(tokens));
-    match tokens.peek() {
-        Some(&Token {
-            kind: TokenKind::SemiColon,
-            ..
-        }) => {
-            tokens.next();
-        }
-        _ => panic!("Expected ;"),
-    }
+    expect_token(tokens, TokenKind::SemiColon);
     let condition = Box::new(parse_expression(tokens));
-    match tokens.peek() {
-        Some(&Token {
-            kind: TokenKind::SemiColon,
-            ..
-        }) => {
-            tokens.next();
-        }
-        _ => panic!("Expected ;"),
-    }
+    expect_token(tokens, TokenKind::SemiColon);
     let increment = Box::new(parse_expression(tokens));
-    match tokens.peek() {
-        Some(&Token {
-            kind: TokenKind::SemiColon,
-            ..
-        }) => {
-            tokens.next();
-        }
-        _ => panic!("Expected ;"),
-    }
+    expect_token(tokens, TokenKind::ParenRight);
+
     let body = Box::new(parse_expression(tokens));
-    Expression::For {
-        initializer,
-        condition,
-        increment,
-        body,
+    Expression {
+        kind: ExpressionKind::For {
+            initializer,
+            condition,
+            increment,
+            body,
+        },
+        position,
     }
 }
 
@@ -418,7 +664,7 @@ pub fn parse(tokens: Vec<Token>) -> Ast {
                 tokens.next();
             }
             Some(_) => {
-                panic!("Unexpected token: {:?}, expected ;", tokens.next().unwrap());
+                // panic!("Unexpected token: {:?}, expected ;", tokens.next().unwrap());
             }
             None => {
                 break;
