@@ -1,8 +1,7 @@
 #[derive(Clone, Debug, PartialEq)]
 pub struct Token {
     pub kind: TokenKind,
-    pub line: usize,
-    pub column: usize,
+    pub position: Position,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -45,9 +44,17 @@ pub enum TokenKind {
     True,
     False,
     Null,
+    Import,
 }
 
-pub fn tokenize(src: &str) -> Vec<Token> {
+#[derive(Clone, Debug, PartialEq)]
+pub struct Position {
+    pub file_path: String,
+    pub line: usize,
+    pub column: usize,
+}
+
+pub fn tokenize(src: &str, file_path: &str) -> Vec<Token> {
     let mut chars = src.chars().peekable();
     let mut tokens = Vec::<Token>::new();
     let mut line: usize = 1;
@@ -126,6 +133,7 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                     "true" => kind = TokenKind::True,
                     "false" => kind = TokenKind::False,
                     "null" => kind = TokenKind::Null,
+                    "import" => kind = TokenKind::Import,
                     _ => kind = TokenKind::Identifier(ident),
                 }
             }
@@ -179,7 +187,7 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                                 't' => string.push('\t'),
                                 '\\' => string.push('\\'),
                                 '"' => string.push('"'),
-                                _ => panic!("Unknown escape character: {}", c),
+                                _ => panic!("Unexpected escape character: {} on {}:{}", c, line, column),
                             }
                             column += 1;
                         }
@@ -218,14 +226,17 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                 continue;
             }
             _ => {
-                panic!("Untokenizable character: {}", c);
+                panic!("Unexpected character: {} on {}:{}", c, line, column);
             }
         }
 
         tokens.push(Token {
             kind,
-            line,
-            column: start_column,
+            position: Position {
+                file_path: file_path.to_string(),
+                line,
+                column: start_column,
+            },
         });
 
         column += 1;
