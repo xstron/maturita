@@ -2,6 +2,7 @@ use std::{env, fs};
 
 mod tokenizer;
 mod parser;
+mod interpreter;
 
 fn main() {
     println!("Hello, world!");
@@ -16,11 +17,13 @@ fn main() {
 
     dbg!(&contents);
 
-    let tokens = tokenizer::tokenize(&contents);
+    let tokens = tokenizer::tokenize(&contents, &args[1]);
 
     dbg!(&tokens);
 
     let ast = parser::parse(tokens);
 
     dbg!(&ast);
+
+    interpreter::interpret(ast);
 }
