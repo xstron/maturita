@@ -7,7 +7,12 @@ use crate::parser::{Ast, Expression, ExpressionKind, Operator};
 use crate::tokenizer::Position;
 
 #[derive(Debug, Clone)]
-pub enum Value {
+pub struct Value {
+    kind: Rc<RefCell<ValueKind>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ValueKind {
     Null,
     Integer(i64),
     Float(f64),
@@ -16,22 +21,30 @@ pub enum Value {
     Boolean(bool),
     List(Vec<Value>),
     Function(Vec<String>, Expression),
-    NativeFunction(fn(Vec<Value>) -> Value),
+    NativeFunction(fn(Rc<Context>, Vec<Value>, &Position) -> Value),
     Return(Box<Value>),
     Break(Box<Value>),
     Continue(Box<Value>),
 }
 
+impl Value {
+    fn new(kind: ValueKind) -> Self {
+        Value {
+            kind: Rc::new(RefCell::new(kind)),
+        }
+    }
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Value::Null => write!(f, "null"),
-            Value::Integer(value) => write!(f, "{}", value),
-            Value::Float(value) => write!(f, "{}", value),
-            Value::String(value) => write!(f, "{}", value),
-            Value::Character(value) => write!(f, "{}", value),
-            Value::Boolean(value) => write!(f, "{}", value),
-            Value::List(values) => {
+        match self.kind.borrow().to_owned() {
+            ValueKind::Null => write!(f, "null"),
+            ValueKind::Integer(value) => write!(f, "{}", value),
+            ValueKind::Float(value) => write!(f, "{}", value),
+            ValueKind::String(value) => write!(f, "{}", value),
+            ValueKind::Character(value) => write!(f, "{}", value),
+            ValueKind::Boolean(value) => write!(f, "{}", value),
+            ValueKind::List(values) => {
                 write!(f, "[")?;
                 for (i, value) in values.iter().enumerate() {
                     if i > 0 {
@@ -41,11 +54,11 @@ impl Display for Value {
                 }
                 write!(f, "]")
             }
-            Value::Function(_, _) => write!(f, "<function>"),
-            Value::NativeFunction(_) => write!(f, "<native function>"),
-            Value::Return(value) => write!(f, "{}", value),
-            Value::Break(value) => write!(f, "{}", value),
-            Value::Continue(value) => write!(f, "{}", value),
+            ValueKind::Function(_, _) => write!(f, "<function>"),
+            ValueKind::NativeFunction(_) => write!(f, "<native function>"),
+            ValueKind::Return(value) => write!(f, "{}", value),
+            ValueKind::Break(value) => write!(f, "{}", value),
+            ValueKind::Continue(value) => write!(f, "{}", value),
         }
     }
 }
@@ -53,30 +66,38 @@ impl Display for Value {
 impl ops::Add<Value> for Value {
     type Output = Value;
     fn add(self, rhs: Value) -> Value {
-        match (self, rhs) {
-            (Value::Integer(left), Value::Integer(right)) => Value::Integer(left + right),
-            (Value::Integer(left), Value::Float(right)) => Value::Float(left as f64 + right),
-            (Value::Float(left), Value::Integer(right)) => Value::Float(left + right as f64),
-            (Value::Float(left), Value::Float(right)) => Value::Float(left + right),
-            (Value::String(left), Value::String(right)) => Value::String(left + &right),
-            (Value::String(left), Value::Character(right)) => {
-                Value::String(left + &right.to_string())
+        match (self.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
+            (ValueKind::Integer(left), ValueKind::Integer(right)) => {
+                Value::new(ValueKind::Integer(left + right))
             }
-            (Value::Character(left), Value::String(right)) => {
-                Value::String(left.to_string() + &right)
+            (ValueKind::Integer(left), ValueKind::Float(right)) => {
+                Value::new(ValueKind::Float(left as f64 + right))
             }
-            (Value::Character(left), Value::Character(right)) => {
-                Value::String(left.to_string() + &right.to_string())
+            (ValueKind::Float(left), ValueKind::Integer(right)) => {
+                Value::new(ValueKind::Float(left + right as f64))
             }
-            (Value::List(left), Value::List(right)) => {
-                let mut list = left.clone();
-                list.extend(right);
-                Value::List(list)
+            (ValueKind::Float(left), ValueKind::Float(right)) => {
+                Value::new(ValueKind::Float(left + right))
             }
-            (Value::List(left), right) => {
-                let mut list = left.clone();
-                list.push(right);
-                Value::List(list)
+            (ValueKind::String(left), ValueKind::String(right)) => {
+                Value::new(ValueKind::String(left + &right))
+            }
+            (ValueKind::String(left), ValueKind::Character(right)) => {
+                Value::new(ValueKind::String(left + &right.to_string()))
+            }
+            (ValueKind::Character(left), ValueKind::String(right)) => {
+                Value::new(ValueKind::String(left.to_string() + &right))
+            }
+            (ValueKind::Character(left), ValueKind::Character(right)) => {
+                Value::new(ValueKind::String(left.to_string() + &right.to_string()))
+            }
+            (ValueKind::List(mut left), ValueKind::List(right)) => {
+                left.extend(right);
+                Value::new(ValueKind::List(left))
+            }
+            (ValueKind::List(mut left), right) => {
+                left.push(Value::new(right));
+                Value::new(ValueKind::List(left))
             }
             _ => panic!("Invalid operands for operator +"),
         }
@@ -86,9 +107,13 @@ impl ops::Add<Value> for Value {
 impl ops::Sub<Value> for Value {
     type Output = Value;
     fn sub(self, rhs: Value) -> Value {
-        match (self, rhs) {
-            (Value::Integer(left), Value::Integer(right)) => Value::Integer(left - right),
-            (Value::Float(left), Value::Float(right)) => Value::Float(left - right),
+        match (self.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
+            (ValueKind::Integer(left), ValueKind::Integer(right)) => {
+                Value::new(ValueKind::Integer(left - right))
+            }
+            (ValueKind::Float(left), ValueKind::Float(right)) => {
+                Value::new(ValueKind::Float(left - right))
+            }
             _ => panic!("Invalid operands for operator -"),
         }
     }
@@ -97,16 +122,24 @@ impl ops::Sub<Value> for Value {
 impl ops::Mul<Value> for Value {
     type Output = Value;
     fn mul(self, rhs: Value) -> Value {
-        match (self, rhs) {
-            (Value::Integer(left), Value::Integer(right)) => Value::Integer(left * right),
-            (Value::Float(left), Value::Integer(right)) => Value::Float(left * right as f64),
-            (Value::Integer(left), Value::Float(right)) => Value::Float(left as f64 * right),
-            (Value::Float(left), Value::Float(right)) => Value::Float(left * right),
-            (Value::String(left), Value::Integer(right)) => {
-                Value::String(left.repeat(right as usize))
+        match (self.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
+            (ValueKind::Integer(left), ValueKind::Integer(right)) => {
+                Value::new(ValueKind::Integer(left * right))
             }
-            (Value::Integer(left), Value::String(right)) => {
-                Value::String(right.repeat(left as usize))
+            (ValueKind::Float(left), ValueKind::Integer(right)) => {
+                Value::new(ValueKind::Float(left * right as f64))
+            }
+            (ValueKind::Integer(left), ValueKind::Float(right)) => {
+                Value::new(ValueKind::Float(left as f64 * right))
+            }
+            (ValueKind::Float(left), ValueKind::Float(right)) => {
+                Value::new(ValueKind::Float(left * right))
+            }
+            (ValueKind::String(left), ValueKind::Integer(right)) => {
+                Value::new(ValueKind::String(left.repeat(right as usize)))
+            }
+            (ValueKind::Integer(left), ValueKind::String(right)) => {
+                Value::new(ValueKind::String(right.repeat(left as usize)))
             }
             _ => panic!("Invalid operands for operator *"),
         }
@@ -116,9 +149,13 @@ impl ops::Mul<Value> for Value {
 impl ops::Div<Value> for Value {
     type Output = Value;
     fn div(self, rhs: Value) -> Value {
-        match (self, rhs) {
-            (Value::Integer(left), Value::Integer(right)) => Value::Integer(left / right),
-            (Value::Float(left), Value::Float(right)) => Value::Float(left / right),
+        match (self.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
+            (ValueKind::Integer(left), ValueKind::Integer(right)) => {
+                Value::new(ValueKind::Integer(left / right))
+            }
+            (ValueKind::Float(left), ValueKind::Float(right)) => {
+                Value::new(ValueKind::Float(left / right))
+            }
             _ => panic!("Invalid operands for operator /"),
         }
     }
@@ -126,14 +163,17 @@ impl ops::Div<Value> for Value {
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Value::Null, Value::Null) => true,
-            (Value::Integer(left), Value::Integer(right)) => left == right,
-            (Value::Float(left), Value::Float(right)) => left == right,
-            (Value::String(left), Value::String(right)) => left == right,
-            (Value::Character(left), Value::Character(right)) => left == right,
-            (Value::Boolean(left), Value::Boolean(right)) => left == right,
-            (Value::List(left), Value::List(right)) => left == right,
+        match (
+            self.kind.borrow().to_owned(),
+            other.kind.borrow().to_owned(),
+        ) {
+            (ValueKind::Null, ValueKind::Null) => true,
+            (ValueKind::Integer(left), ValueKind::Integer(right)) => left == right,
+            (ValueKind::Float(left), ValueKind::Float(right)) => left == right,
+            (ValueKind::String(left), ValueKind::String(right)) => left == right,
+            (ValueKind::Character(left), ValueKind::Character(right)) => left == right,
+            (ValueKind::Boolean(left), ValueKind::Boolean(right)) => left == right,
+            (ValueKind::List(left), ValueKind::List(right)) => left == right,
             _ => false,
         }
     }
@@ -141,21 +181,28 @@ impl PartialEq for Value {
 
 impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match (self, other) {
-            (Value::Integer(left), Value::Integer(right)) => left.partial_cmp(right),
-            (Value::Float(left), Value::Integer(right)) => left.partial_cmp(&(*right as f64)),
-            (Value::Integer(left), Value::Float(right)) => (*left as f64).partial_cmp(right),
-            (Value::Float(left), Value::Float(right)) => left.partial_cmp(right),
-            (Value::String(left), Value::String(right)) => left.partial_cmp(right),
-            (Value::Character(left), Value::Character(right)) => left.partial_cmp(right),
+        match (
+            self.kind.borrow().to_owned(),
+            other.kind.borrow().to_owned(),
+        ) {
+            (ValueKind::Integer(left), ValueKind::Integer(right)) => left.partial_cmp(&right),
+            (ValueKind::Float(left), ValueKind::Integer(right)) => {
+                left.partial_cmp(&(right as f64))
+            }
+            (ValueKind::Integer(left), ValueKind::Float(right)) => {
+                (left as f64).partial_cmp(&right)
+            }
+            (ValueKind::Float(left), ValueKind::Float(right)) => left.partial_cmp(&right),
+            (ValueKind::String(left), ValueKind::String(right)) => left.partial_cmp(&right),
+            (ValueKind::Character(left), ValueKind::Character(right)) => left.partial_cmp(&right),
             _ => None,
         }
     }
 }
 
 #[derive(Debug)]
-struct Context {
-    variables: Rc<RefCell<HashMap<String, Value>>>,
+pub struct Context {
+    variables: Rc<RefCell<HashMap<String, Rc<RefCell<Value>>>>>,
     parent: Option<Rc<Context>>,
 }
 
@@ -167,7 +214,7 @@ impl Context {
         }
     }
 
-    fn get_variable(&self, name: &str) -> Option<Value> {
+    fn get_variable(&self, name: &str) -> Option<Rc<RefCell<Value>>> {
         match self.variables.borrow().get(name) {
             Some(value) => Some(value.clone()),
             None => match &self.parent {
@@ -179,17 +226,29 @@ impl Context {
 
     fn set_variable(&self, name: &str, value: Value) {
         if self.variables.borrow().contains_key(name) {
-            self.variables.borrow_mut().insert(name.to_owned(), value);
+            let val = self.variables.borrow().get(name).unwrap().clone();
+            *val.borrow_mut() = value;
         } else {
             match &self.parent {
                 Some(parent) => parent.set_variable(name, value),
-                None => panic!("Variable {} not found", name),
+                None => panic!("Variable \"{}\" not found", name),
             }
         }
     }
 
     fn define_variable(&self, name: &str, value: Value) {
-        self.variables.borrow_mut().insert(name.to_owned(), value);
+        self.variables
+            .borrow_mut()
+            .insert(name.to_owned(), Rc::new(RefCell::new(value)));
+    }
+}
+
+fn get_value(value: Value) -> Value {
+    match value.kind.borrow().to_owned() {
+        ValueKind::Return(val) => get_value(*val),
+        ValueKind::Break(val) => get_value(*val),
+        ValueKind::Continue(val) => get_value(*val),
+        _ => value.clone(),
     }
 }
 
@@ -213,16 +272,16 @@ fn interpret_unary(
     right: &Expression,
     position: &Position,
 ) -> Value {
-    let value = interpret_expression(context.clone(), right);
+    let value = interpret_expression(context.clone(), right, position);
     match operator {
-        Operator::MinusUnary => match value {
-            Value::Integer(value) => Value::Integer(-value),
-            Value::Float(value) => Value::Float(-value),
-            _ => panic_unexpected_value(value, &right.position, "numeric type"),
+        Operator::MinusUnary => match value.kind.borrow().to_owned() {
+            ValueKind::Integer(value) => Value::new(ValueKind::Integer(-value)),
+            ValueKind::Float(value) => Value::new(ValueKind::Float(-value)),
+            _ => panic_unexpected_value(value.clone(), &right.position, "numeric type"),
         },
-        Operator::Bang => match value {
-            Value::Boolean(value) => Value::Boolean(!value),
-            _ => panic_unexpected_value(value, &right.position, "boolean"),
+        Operator::Bang => match value.kind.borrow().to_owned() {
+            ValueKind::Boolean(value) => Value::new(ValueKind::Boolean(!value)),
+            _ => panic_unexpected_value(value.clone(), &right.position, "boolean"),
         },
         _ => panic_unexpected_operator(operator, position, "unary operator"),
     }
@@ -235,15 +294,15 @@ fn interpret_binary(
     rhs: &Expression,
     position: &Position,
 ) -> Value {
-    let left = interpret_expression(context.clone(), lhs);
-    let right = interpret_expression(context.clone(), rhs);
+    let left = interpret_expression(context.clone(), lhs, position);
+    let right = interpret_expression(context.clone(), rhs, position);
     match operator {
-        Operator::BangEqual => Value::Boolean(left != right),
-        Operator::EqualEqual => Value::Boolean(left == right),
-        Operator::Less => Value::Boolean(left < right),
-        Operator::LessEqual => Value::Boolean(left <= right),
-        Operator::Greater => Value::Boolean(left > right),
-        Operator::GreaterEqual => Value::Boolean(left >= right),
+        Operator::BangEqual => Value::new(ValueKind::Boolean(left != right)),
+        Operator::EqualEqual => Value::new(ValueKind::Boolean(left == right)),
+        Operator::Less => Value::new(ValueKind::Boolean(left < right)),
+        Operator::LessEqual => Value::new(ValueKind::Boolean(left <= right)),
+        Operator::Greater => Value::new(ValueKind::Boolean(left > right)),
+        Operator::GreaterEqual => Value::new(ValueKind::Boolean(left >= right)),
         Operator::Plus => left + right,
         Operator::Minus => left - right,
         Operator::Star => left * right,
@@ -260,13 +319,13 @@ fn interpret_variable_definition(
 ) -> Value {
     match context.get_variable(name) {
         Some(_) => panic!(
-            "Already existing variable {} being defined again at {}",
+            "Already existing variable \"{}\" being defined again at {}",
             name, position
         ),
         None => {
             let value = match initializer {
-                Some(initializer) => interpret_expression(context.clone(), &initializer),
-                None => Value::Null,
+                Some(initializer) => interpret_expression(context.clone(), &initializer, position),
+                None => Value::new(ValueKind::Null),
             };
 
             context.define_variable(name, value.clone());
@@ -283,12 +342,12 @@ fn interpret_assignment(
 ) -> Value {
     match context.get_variable(name) {
         Some(_) => {
-            let value = interpret_expression(context.clone(), &value);
+            let value = interpret_expression(context.clone(), &value, position);
             context.set_variable(name, value.clone());
             value
         }
         None => panic!(
-            "Non-existent variable {} being assigned a value at {}",
+            "Non-existent variable \"{}\" being assigned a value at {}",
             name, position
         ),
     }
@@ -303,11 +362,11 @@ fn interpret_function_definition(
 ) -> Value {
     match context.get_variable(name) {
         Some(_) => panic!(
-            "Already existing function {} being defined again at {}",
+            "Already existing function \"{}\" being defined again at {}",
             name, position
         ),
         None => {
-            let function = Value::Function(parameters, body);
+            let function = Value::new(ValueKind::Function(parameters, body));
 
             context.define_variable(name, function.clone());
             function
@@ -321,27 +380,24 @@ fn interpret_function_call(
     arguments: Vec<Expression>,
     position: &Position,
 ) -> Value {
-    let callee = interpret_expression(context.clone(), callee);
+    let callee = interpret_expression(context.clone(), callee, position);
     let arguments: Vec<Value> = arguments
         .iter()
-        .map(|arg| interpret_expression(context.clone(), arg))
+        .map(|arg| interpret_expression(context.clone(), arg, position))
         .collect();
 
-    match callee {
-        Value::Function(params, body) => {
+    match callee.clone().kind.borrow().to_owned() {
+        ValueKind::Function(params, body) => {
             let function_context = Rc::new(Context::new(Some(context.clone())));
 
             for (param, arg) in params.iter().zip(arguments) {
                 function_context.define_variable(&param.to_string(), arg);
             }
 
-            match interpret_expression(function_context, &body) {
-                Value::Return(value) => *value,
-                value => value,
-            }
+            get_value(interpret_expression(function_context, &body, position))
         }
-        Value::NativeFunction(function) => function(arguments),
-        _ => panic_unexpected_value(callee, position, "function or native function"),
+        ValueKind::NativeFunction(function) => function(context.clone(), arguments, position),
+        _ => panic_unexpected_value(callee.clone(), position, "function or native function"),
     }
 }
 
@@ -352,13 +408,13 @@ fn interpret_block(
 ) -> Value {
     let block_context = Rc::new(Context::new(Some(context.clone())));
 
-    let mut value = Value::Null;
+    let mut value = Value::new(ValueKind::Null);
 
     for expression in expressions {
-        value = interpret_expression(block_context.clone(), &expression);
-        match value {
-            Value::Return(_) => break,
-            _ => (),
+        value = interpret_expression(block_context.clone(), &expression, position);
+        match value.kind.borrow().to_owned() {
+            ValueKind::Return(_) | ValueKind::Break(_) | ValueKind::Continue(_) => break,
+            _ => {}
         }
     }
 
@@ -373,21 +429,30 @@ fn interpret_if(
     else_branch: Option<Expression>,
     position: &Position,
 ) -> Value {
-    if let Value::Boolean(true) = interpret_expression(context.clone(), condition) {
-        return interpret_expression(context.clone(), then_branch);
+    if let ValueKind::Boolean(true) = interpret_expression(context.clone(), condition, position)
+        .kind
+        .borrow()
+        .to_owned()
+    {
+        return interpret_expression(context.clone(), then_branch, position);
     } else {
         for (condition, body) in elseif_branches {
-            if let Value::Boolean(true) = interpret_expression(context.clone(), &condition) {
-                return interpret_expression(context.clone(), &body);
+            if let ValueKind::Boolean(true) =
+                interpret_expression(context.clone(), &condition, position)
+                    .kind
+                    .borrow()
+                    .to_owned()
+            {
+                return interpret_expression(context.clone(), &body, position);
             }
         }
 
         if let Some(else_branch) = else_branch {
-            return interpret_expression(context.clone(), &else_branch);
+            return interpret_expression(context.clone(), &else_branch, position);
         }
     }
 
-    Value::Null
+    Value::new(ValueKind::Null)
 }
 
 fn interpret_while(
@@ -397,21 +462,28 @@ fn interpret_while(
     position: &Position,
 ) -> Value {
     let mut list = vec![];
-    while let Value::Boolean(true) = interpret_expression(context.clone(), condition) {
-        let value = interpret_expression(context.clone(), body);
-        list.push(value.clone());
-        match value {
-            Value::Break(_) => {
+    while let ValueKind::Boolean(true) = interpret_expression(context.clone(), condition, position)
+        .kind
+        .borrow()
+        .to_owned()
+    {
+        let value = interpret_expression(context.clone(), body, position);
+        list.push(get_value(value.clone()));
+        match value.kind.borrow().to_owned() {
+            ValueKind::Return(_) => {
+                return value.clone();
+            }
+            ValueKind::Break(_) => {
                 break;
             }
-            Value::Continue(_) => {
+            ValueKind::Continue(_) => {
                 continue;
             }
             _ => {}
         };
     }
 
-    Value::List(list)
+    Value::new(ValueKind::List(list))
 }
 
 fn interpret_for(
@@ -423,31 +495,45 @@ fn interpret_for(
     position: &Position,
 ) -> Value {
     let mut list = vec![];
-    interpret_expression(context.clone(), initializer);
-    while let Value::Boolean(true) = interpret_expression(context.clone(), condition) {
-        list.push(interpret_expression(context.clone(), body));
-        interpret_expression(context.clone(), increment);
+    interpret_expression(context.clone(), initializer, position);
+    while let ValueKind::Boolean(true) = interpret_expression(context.clone(), condition, position)
+        .kind
+        .borrow()
+        .to_owned()
+    {
+        let value = interpret_expression(context.clone(), body, position);
+        list.push(get_value(value.clone()));
+        match value.kind.borrow().to_owned() {
+            ValueKind::Return(_) => {
+                return value.clone();
+            }
+            ValueKind::Break(_) => {
+                break;
+            }
+            _ => {}
+        }
+        interpret_expression(context.clone(), increment, position);
     }
 
-    Value::List(list)
+    Value::new(ValueKind::List(list))
 }
 
 fn interpret_return(context: Rc<Context>, value: Option<Expression>, position: &Position) -> Value {
     let value = match value {
-        Some(value) => interpret_expression(context, &value),
-        None => Value::Null,
+        Some(value) => interpret_expression(context, &value, position),
+        None => Value::new(ValueKind::Null),
     };
 
-    Value::Return(Box::new(value))
+    Value::new(ValueKind::Return(Box::new(value)))
 }
 
 fn interpret_break(context: Rc<Context>, value: Option<Expression>, position: &Position) -> Value {
     let value = match value {
-        Some(value) => interpret_expression(context, &value),
-        None => Value::Null,
+        Some(value) => interpret_expression(context, &value, position),
+        None => Value::new(ValueKind::Null),
     };
 
-    value
+    Value::new(ValueKind::Break(Box::new(value)))
 }
 
 fn interpret_continue(
@@ -456,11 +542,11 @@ fn interpret_continue(
     position: &Position,
 ) -> Value {
     let value = match value {
-        Some(value) => interpret_expression(context, &value),
-        None => Value::Null,
+        Some(value) => interpret_expression(context, &value, position),
+        None => Value::new(ValueKind::Null),
     };
 
-    value
+    Value::new(ValueKind::Continue(Box::new(value)))
 }
 
 fn interpret_list_index(
@@ -469,21 +555,24 @@ fn interpret_list_index(
     index: &Expression,
     position: &Position,
 ) -> Value {
-    let list_value = interpret_expression(context.clone(), list);
-    let index_value = interpret_expression(context.clone(), index);
+    let list_value = interpret_expression(context.clone(), list, position);
+    let index_value = interpret_expression(context.clone(), index, position);
 
-    match list_value {
-        Value::List(_) => {}
-        _ => panic_unexpected_value(list_value, &list.position, "list"),
+    match list_value.kind.borrow().to_owned() {
+        ValueKind::List(_) => {}
+        _ => panic_unexpected_value(list_value.clone(), &list.position, "list"),
     }
 
-    match index_value {
-        Value::Integer(_) => {}
-        _ => panic_unexpected_value(index_value, &index.position, "integer list index"),
+    match index_value.kind.borrow().to_owned() {
+        ValueKind::Integer(_) => {}
+        _ => panic_unexpected_value(index_value.clone(), &index.position, "integer list index"),
     }
 
-    match (list_value, index_value) {
-        (Value::List(list), Value::Integer(index)) => list[index as usize].clone(),
+    match (
+        list_value.clone().kind.borrow().to_owned(),
+        index_value.clone().kind.borrow().to_owned(),
+    ) {
+        (ValueKind::List(list), ValueKind::Integer(index)) => list[index as usize].clone(),
         _ => panic!("Invalid list index at {}", position),
     }
 }
@@ -492,7 +581,7 @@ fn interpret_import(context: Rc<Context>, path: &str, position: &Position) -> Va
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(e) => {
-            panic!("Failed to import file {} at {}: {}", path, position, e)
+            panic!("Failed to import file \"{}\" at {}: {}", path, position, e)
         }
     };
     let tokens = crate::tokenizer::tokenize(&contents, path);
@@ -501,24 +590,31 @@ fn interpret_import(context: Rc<Context>, path: &str, position: &Position) -> Va
     interpret_ast(context, ast)
 }
 
-fn interpret_expression(context: Rc<Context>, expression: &Expression) -> Value {
+fn interpret_expression(
+    context: Rc<Context>,
+    expression: &Expression,
+    position: &Position,
+) -> Value {
     match &expression.kind {
-        ExpressionKind::Float(f) => Value::Float(*f),
-        ExpressionKind::Integer(i) => Value::Integer(*i),
-        ExpressionKind::String(s) => Value::String(s.to_owned()),
-        ExpressionKind::Character(c) => Value::Character(*c),
-        ExpressionKind::Boolean(b) => Value::Boolean(*b),
-        ExpressionKind::Null => Value::Null,
+        ExpressionKind::Float(f) => Value::new(ValueKind::Float(*f)),
+        ExpressionKind::Integer(i) => Value::new(ValueKind::Integer(*i)),
+        ExpressionKind::String(s) => Value::new(ValueKind::String(s.to_owned())),
+        ExpressionKind::Character(c) => Value::new(ValueKind::Character(*c)),
+        ExpressionKind::Boolean(b) => Value::new(ValueKind::Boolean(*b)),
+        ExpressionKind::Null => Value::new(ValueKind::Null),
         ExpressionKind::Variable(name) => match context.get_variable(name) {
-            Some(value) => value,
-            None => panic!("Variable {} not found", name),
+            Some(value) => value.borrow().clone(),
+            None => panic!(
+                "Non-existent variable \"{}\" being evaluated at {}",
+                name, position
+            ),
         },
-        ExpressionKind::List(expressions) => Value::List(
+        ExpressionKind::List(expressions) => Value::new(ValueKind::List(
             expressions
                 .iter()
-                .map(|e| interpret_expression(context.clone(), e))
+                .map(|e| interpret_expression(context.clone(), e, position))
                 .collect(),
-        ),
+        )),
         ExpressionKind::Unary { operator, right } => {
             interpret_unary(context, *operator, &*right, &expression.position)
         }
@@ -527,7 +623,7 @@ fn interpret_expression(context: Rc<Context>, expression: &Expression) -> Value 
             operator,
             right,
         } => interpret_binary(context, &*left, *operator, &*right, &expression.position),
-        ExpressionKind::Grouping(expression) => interpret_expression(context, expression),
+        ExpressionKind::Grouping(expression) => interpret_expression(context, expression, position),
         ExpressionKind::VariableDefinition { name, initializer } => {
             interpret_variable_definition(context, name, *initializer.clone(), &expression.position)
         }
@@ -599,9 +695,9 @@ fn interpret_expression(context: Rc<Context>, expression: &Expression) -> Value 
 }
 
 fn interpret_ast(context: Rc<Context>, ast: Ast) -> Value {
-    let mut value = Value::Null;
+    let mut value = Value::new(ValueKind::Null);
     for expression in ast.expressions {
-        value = interpret_expression(context.clone(), &expression);
+        value = interpret_expression(context.clone(), &expression, &expression.position);
     }
 
     value
@@ -610,95 +706,136 @@ fn interpret_ast(context: Rc<Context>, ast: Ast) -> Value {
 fn add_native_functions(context: Rc<Context>) {
     context.define_variable(
         "print",
-        Value::NativeFunction(|arguments| {
+        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
             for argument in arguments {
-                print!("{}", argument);
+                print!("{} ", argument);
             }
             println!();
-            Value::Null
-        }),
+            Value::new(ValueKind::Null)
+        })),
     );
     context.define_variable(
-        "append",
-        Value::NativeFunction(|arguments| {
-            let mut list = match &arguments[0] {
-                Value::List(list) => list.clone(),
-                _ => panic!("First argument must be a list"),
+        "push",
+        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            let mut kind = arguments[0].kind.borrow_mut();
+            let mut list = match kind.to_owned() {
+                ValueKind::List(list) => list,
+                _ => panic!("First argument of \"append\" is not a list at {}", position),
             };
             list.push(arguments[1].clone());
-            Value::List(list)
-        }),
+            *kind = ValueKind::List(list);
+            arguments[1].clone()
+        })),
     );
     context.define_variable(
         "pop",
-        Value::NativeFunction(|arguments| {
-            let mut list = match &arguments[0] {
-                Value::List(list) => list.clone(),
-                _ => panic!("First argument must be a list"),
+        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            let mut kind = arguments[0].kind.borrow_mut();
+            let mut list = match kind.to_owned() {
+                ValueKind::List(list) => list,
+                _ => panic!("First argument of \"pop\" is not a list at {}", position),
             };
-            match &arguments[1] {
-                Value::Integer(index) => list.remove(*index as usize),
-                _ => panic!("Second argument must be an integer"),
+            let popped = list.pop();
+            *kind = ValueKind::List(list);
+            match popped {
+                Some(val) => val,
+                None => Value::new(ValueKind::Null),
             }
-        }),
+        })),
     );
     context.define_variable(
         "insert",
-        Value::NativeFunction(|arguments| {
-            let mut list = match &arguments[0] {
-                Value::List(list) => list.clone(),
-                _ => panic!("First argument must be a list"),
+        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            let mut kind = arguments[0].kind.borrow_mut();
+            let mut list = match kind.to_owned() {
+                ValueKind::List(list) => list,
+                _ => panic!("First argument of \"insert\" is not a list at {}", position),
             };
-            match &arguments[1] {
-                Value::Integer(index) => {
-                    list.insert(*index as usize, arguments[2].clone());
-                    Value::List(list)
+            match arguments[1].kind.borrow().to_owned() {
+                ValueKind::Integer(index) => {
+                    list.insert(index as usize, arguments[2].clone());
+                    *kind = ValueKind::List(list);
+                    arguments[2].clone()
                 }
-                _ => panic!("Second argument must be an integer"),
+                _ => panic!(
+                    "Second argument of \"insert\" is not an integer at {}",
+                    position
+                ),
             }
-        }),
+        })),
+    );
+    context.define_variable(
+        "remove",
+        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            let mut kind = arguments[0].kind.borrow_mut();
+            let mut list = match kind.to_owned() {
+                ValueKind::List(list) => list,
+                _ => panic!("First argument of \"remove\" is not a list at {}", position),
+            };
+            match arguments[1].kind.borrow().to_owned() {
+                ValueKind::Integer(index) => {
+                    let removed = list.remove(index as usize);
+                    *kind = ValueKind::List(list);
+                    removed
+                }
+                _ => panic!(
+                    "Second argument of \"remove\" is not an integer at {}",
+                    position
+                ),
+            }
+        })),
     );
     context.define_variable(
         "len",
-        Value::NativeFunction(|arguments| match &arguments[0] {
-            Value::List(list) => Value::Integer(list.len() as i64),
-            _ => panic!("Argument must be a list"),
-        }),
+        Value::new(ValueKind::NativeFunction(
+            |context, arguments, position| match arguments[0].kind.borrow().to_owned() {
+                ValueKind::List(list) => Value::new(ValueKind::Integer(list.len() as i64)),
+                _ => panic!("First argument of \"len\" is not a list at {}", position),
+            },
+        )),
     );
     context.define_variable(
         "input",
-        Value::NativeFunction(|_| {
+        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
             let mut input = String::new();
             std::io::stdin().read_line(&mut input).unwrap();
-            Value::String(input.trim().to_owned())
-        }),
+            Value::new(ValueKind::String(input.trim().to_owned()))
+        })),
     );
     context.define_variable(
         "int",
-        Value::NativeFunction(|arguments| match &arguments[0] {
-            Value::String(s) => Value::Integer(s.parse().unwrap()),
-            Value::Float(f) => Value::Integer(*f as i64),
-            _ => panic!("Invalid argument type"),
-        }),
+        Value::new(ValueKind::NativeFunction(
+            |context, arguments, position| match arguments[0].kind.borrow().to_owned() {
+                ValueKind::String(s) => Value::new(ValueKind::Integer(s.parse().unwrap())),
+                ValueKind::Float(f) => Value::new(ValueKind::Integer(f as i64)),
+                _ => panic!("Invalid argument type"),
+            },
+        )),
     );
     context.define_variable(
         "float",
-        Value::NativeFunction(|arguments| match &arguments[0] {
-            Value::String(s) => Value::Float(s.parse().unwrap()),
-            Value::Integer(i) => Value::Float(*i as f64),
-            _ => panic!("Invalid argument type"),
-        }),
+        Value::new(ValueKind::NativeFunction(
+            |context, arguments, position| match arguments[0].kind.borrow().to_owned() {
+                ValueKind::String(s) => Value::new(ValueKind::Float(s.parse().unwrap())),
+                ValueKind::Integer(i) => Value::new(ValueKind::Float(i as f64)),
+                _ => panic!("Invalid argument type"),
+            },
+        )),
     );
     context.define_variable(
         "str",
-        Value::NativeFunction(|arguments| Value::String(arguments[0].to_string())),
+        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            Value::new(ValueKind::String(arguments[0].to_string()))
+        })),
     );
     context.define_variable(
         "char",
-        Value::NativeFunction(|arguments| match &arguments[0] {
-            Value::Integer(i) => Value::Character((*i as u8) as char),
-            _ => panic!("Invalid argument type"),
-        }),
+        Value::new(ValueKind::NativeFunction(
+            |context, arguments, position| match arguments[0].kind.borrow().to_owned() {
+                ValueKind::Integer(i) => Value::new(ValueKind::Character((i as u8) as char)),
+                _ => panic!("Invalid argument type"),
+            },
+        )),
     );
 }
 
