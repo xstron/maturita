@@ -18,6 +18,7 @@ pub enum ExpressionKind {
     String(String),
     Character(char),
     Boolean(bool),
+    Null,
     Variable(String),
     List(Vec<Expression>),
     Unary {
@@ -229,8 +230,8 @@ type Tokens = std::iter::Peekable<std::vec::IntoIter<Token>>;
 
 fn panic_unexpected_token(token: &Token, expected: &str) {
     panic!(
-        "Unexpected token: {:?} on {}:{}, expected {}",
-        token.kind, token.position.line, token.position.column, expected
+        "Unexpected token: {:?} at {}:{}:{}, expected {}",
+        token.kind, token.position.file_path, token.position.line, token.position.column, expected
     );
 }
 
@@ -368,12 +369,16 @@ fn parse_primary(tokens: &mut Tokens) -> Expression {
             kind: ExpressionKind::Boolean(false),
             position: token.position,
         },
+        TokenKind::Null => Expression {
+            kind: ExpressionKind::Null,
+            position: token.position,
+        },
         TokenKind::Identifier(name) => match tokens.peek() {
             Some(&Token {
                 kind: TokenKind::Equal,
                 ..
             }) => {
-                expect_token(tokens, TokenKind::Equal);
+                let token = expect_token(tokens, TokenKind::Equal);
                 let value = parse_expression(tokens);
                 Expression {
                     kind: ExpressionKind::Assignment {
@@ -425,14 +430,12 @@ fn parse_primary(tokens: &mut Tokens) -> Expression {
             },
             position: token.position,
         },
-
         TokenKind::Break => Expression {
             kind: ExpressionKind::Break {
                 value: Box::new(parse_optional_expression(tokens)),
             },
             position: token.position,
         },
-
         TokenKind::Continue => Expression {
             kind: ExpressionKind::Continue {
                 value: Box::new(parse_optional_expression(tokens)),
@@ -440,12 +443,14 @@ fn parse_primary(tokens: &mut Tokens) -> Expression {
             position: token.position,
         },
         TokenKind::Import => {
-            let path = match expect_token(tokens, TokenKind::String(String::new())).kind {
-                TokenKind::String(path) => path,
-                kind => {
-                    panic_unexpected_token(&Token { kind, position: token.position }, "string");
-                    panic!();
-                }
+            let path = match expect_token(tokens, TokenKind::String(String::new())) {
+                token => match token.kind {
+                    TokenKind::String(name) => name,
+                    _ => {
+                        panic_unexpected_token(&token, "string");
+                        panic!();
+                    }
+                },
             };
             Expression {
                 kind: ExpressionKind::Import(path),
@@ -508,12 +513,14 @@ fn parse_expression_list_until(
 }
 
 fn parse_variable_definition(tokens: &mut Tokens, position: Position) -> Expression {
-    let name = match expect_token(tokens, TokenKind::Identifier(String::new())).kind {
-        TokenKind::Identifier(name) => name,
-        kind => {
-            panic_unexpected_token(&Token { kind, position }, "identifier");
-            panic!();
-        }
+    let name = match expect_token(tokens, TokenKind::Identifier(String::new())) {
+        token => match token.kind {
+            TokenKind::Identifier(name) => name,
+            _ => {
+                panic_unexpected_token(&token, "identifier");
+                panic!();
+            }
+        },
     };
 
     let initializer = if let Some(&Token {
@@ -537,12 +544,14 @@ fn parse_variable_definition(tokens: &mut Tokens, position: Position) -> Express
 }
 
 fn parse_function_definition(tokens: &mut Tokens, position: Position) -> Expression {
-    let name = match expect_token(tokens, TokenKind::Identifier(String::new())).kind {
-        TokenKind::Identifier(name) => name,
-        kind => {
-            panic_unexpected_token(&Token { kind, position }, "identifier");
-            panic!();
-        }
+    let name = match expect_token(tokens, TokenKind::Identifier(String::new())) {
+        token => match token.kind {
+            TokenKind::Identifier(name) => name,
+            _ => {
+                panic_unexpected_token(&token, "identifier");
+                panic!();
+            }
+        },
     };
 
     expect_token(tokens, TokenKind::ParenLeft);
