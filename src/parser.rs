@@ -228,11 +228,11 @@ fn get_associativity(operator: &Operator) -> OperatorAssociativity {
 
 type Tokens = std::iter::Peekable<std::vec::IntoIter<Token>>;
 
-fn panic_unexpected_token(token: &Token, expected: &str) {
+fn panic_unexpected_token(token: &Token, expected: &str) -> ! {
     panic!(
-        "Unexpected token: {:?} at {}:{}:{}, expected {}",
-        token.kind, token.position.file_path, token.position.line, token.position.column, expected
-    );
+        "Unexpected token: {:?} at {}, expected {}",
+        token.kind, token.position, expected
+    )
 }
 
 // Operator precedence parsing
@@ -253,7 +253,6 @@ fn parse_expression_1(tokens: &mut Tokens, min_precedence: OperatorPrecedence) -
                     }
                 } else {
                     panic_unexpected_token(token, "prefix operator");
-                    panic!();
                 }
             } else {
                 parse_primary(tokens)
@@ -448,7 +447,6 @@ fn parse_primary(tokens: &mut Tokens) -> Expression {
                     TokenKind::String(name) => name,
                     _ => {
                         panic_unexpected_token(&token, "string");
-                        panic!();
                     }
                 },
             };
@@ -459,7 +457,6 @@ fn parse_primary(tokens: &mut Tokens) -> Expression {
         }
         _ => {
             panic_unexpected_token(&token, "start of primary expression");
-            panic!();
         }
     }
 }
@@ -518,7 +515,6 @@ fn parse_variable_definition(tokens: &mut Tokens, position: Position) -> Express
             TokenKind::Identifier(name) => name,
             _ => {
                 panic_unexpected_token(&token, "identifier");
-                panic!();
             }
         },
     };
@@ -549,7 +545,6 @@ fn parse_function_definition(tokens: &mut Tokens, position: Position) -> Express
             TokenKind::Identifier(name) => name,
             _ => {
                 panic_unexpected_token(&token, "identifier");
-                panic!();
             }
         },
     };
@@ -571,7 +566,6 @@ fn parse_function_definition(tokens: &mut Tokens, position: Position) -> Express
             }
             _ => {
                 panic_unexpected_token(token, "identifier");
-                panic!()
             }
         }
     }

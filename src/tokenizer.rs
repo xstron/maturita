@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Token {
     pub kind: TokenKind,
@@ -52,6 +54,12 @@ pub struct Position {
     pub file_path: String,
     pub line: usize,
     pub column: usize,
+}
+
+impl Display for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}:{}:{}", self.file_path, self.line, self.column)
+    }
 }
 
 pub fn tokenize(src: &str, file_path: &str) -> Vec<Token> {
@@ -187,7 +195,15 @@ pub fn tokenize(src: &str, file_path: &str) -> Vec<Token> {
                                 't' => string.push('\t'),
                                 '\\' => string.push('\\'),
                                 '"' => string.push('"'),
-                                _ => panic!("Unexpected escape character: {} on {}:{}", c, line, column),
+                                _ => panic!(
+                                    "Unexpected escape character: {} at {}",
+                                    c,
+                                    Position {
+                                        file_path: file_path.to_string(),
+                                        line,
+                                        column,
+                                    }
+                                ),
                             }
                             column += 1;
                         }
@@ -226,7 +242,15 @@ pub fn tokenize(src: &str, file_path: &str) -> Vec<Token> {
                 continue;
             }
             _ => {
-                panic!("Unexpected character: {} on {}:{}", c, line, column);
+                panic!(
+                    "Unexpected character: {} at {}",
+                    c,
+                    Position {
+                        file_path: file_path.to_string(),
+                        line,
+                        column,
+                    }
+                );
             }
         }
 

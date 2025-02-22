@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::{cell::RefCell, collections::HashMap};
 
 use crate::parser::{Ast, Expression, ExpressionKind, Operator};
+use crate::tokenizer::Position;
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -17,6 +18,8 @@ pub enum Value {
     Function(Vec<String>, Expression),
     NativeFunction(fn(Vec<Value>) -> Value),
     Return(Box<Value>),
+    Break(Box<Value>),
+    Continue(Box<Value>),
 }
 
 impl Display for Value {
@@ -41,6 +44,8 @@ impl Display for Value {
             Value::Function(_, _) => write!(f, "<function>"),
             Value::NativeFunction(_) => write!(f, "<native function>"),
             Value::Return(value) => write!(f, "{}", value),
+            Value::Break(value) => write!(f, "{}", value),
+            Value::Continue(value) => write!(f, "{}", value),
         }
     }
 }
@@ -188,19 +193,38 @@ impl Context {
     }
 }
 
-fn interpret_unary(context: Rc<Context>, operator: Operator, right: &Expression) -> Value {
+fn panic_unexpected_value(value: Value, position: &Position, expected: &str) -> ! {
+    panic!(
+        "Unexpected value: {:?} at {}, expected {}",
+        value, position, expected
+    );
+}
+
+fn panic_unexpected_operator(operator: Operator, position: &Position, expected: &str) -> ! {
+    panic!(
+        "Unexpected value: {:?} at {}, expected {}",
+        operator, position, expected
+    );
+}
+
+fn interpret_unary(
+    context: Rc<Context>,
+    operator: Operator,
+    right: &Expression,
+    position: &Position,
+) -> Value {
     let value = interpret_expression(context.clone(), right);
     match operator {
         Operator::MinusUnary => match value {
             Value::Integer(value) => Value::Integer(-value),
             Value::Float(value) => Value::Float(-value),
-            _ => panic!("non numeric value used with numeric operator"),
+            _ => panic_unexpected_value(value, &right.position, "numeric type"),
         },
         Operator::Bang => match value {
             Value::Boolean(value) => Value::Boolean(!value),
-            _ => panic!("non boolean value used with boolean operator"),
+            _ => panic_unexpected_value(value, &right.position, "boolean"),
         },
-        _ => panic!("Invalid unary operator"),
+        _ => panic_unexpected_operator(operator, position, "unary operator"),
     }
 }
 
@@ -209,6 +233,7 @@ fn interpret_binary(
     lhs: &Expression,
     operator: Operator,
     rhs: &Expression,
+    position: &Position,
 ) -> Value {
     let left = interpret_expression(context.clone(), lhs);
     let right = interpret_expression(context.clone(), rhs);
@@ -223,10 +248,7 @@ fn interpret_binary(
         Operator::Minus => left - right,
         Operator::Star => left * right,
         Operator::Slash => left / right,
-        _ => panic!(
-            "Unexpected bynary operator {:?} on {}:{}",
-            operator, lhs.position.line, lhs.position.column
-        ),
+        _ => panic_unexpected_operator(operator, position, "binary operator"),
     }
 }
 
@@ -234,9 +256,13 @@ fn interpret_variable_definition(
     context: Rc<Context>,
     name: &str,
     initializer: Option<Expression>,
+    position: &Position,
 ) -> Value {
     match context.get_variable(name) {
-        Some(_) => panic!("Variable {} already declared", name),
+        Some(_) => panic!(
+            "Already existing variable {} being defined again at {}",
+            name, position
+        ),
         None => {
             let value = match initializer {
                 Some(initializer) => interpret_expression(context.clone(), &initializer),
@@ -249,14 +275,22 @@ fn interpret_variable_definition(
     }
 }
 
-fn interpret_assignment(context: Rc<Context>, name: &str, value: &Expression) -> Value {
+fn interpret_assignment(
+    context: Rc<Context>,
+    name: &str,
+    value: &Expression,
+    position: &Position,
+) -> Value {
     match context.get_variable(name) {
         Some(_) => {
             let value = interpret_expression(context.clone(), &value);
             context.set_variable(name, value.clone());
             value
         }
-        None => panic!("Variable {} not found", name),
+        None => panic!(
+            "Non-existent variable {} being assigned a value at {}",
+            name, position
+        ),
     }
 }
 
@@ -265,17 +299,27 @@ fn interpret_function_definition(
     name: &str,
     parameters: Vec<String>,
     body: Expression,
+    position: &Position,
 ) -> Value {
-    let function = Value::Function(parameters, body);
+    match context.get_variable(name) {
+        Some(_) => panic!(
+            "Already existing function {} being defined again at {}",
+            name, position
+        ),
+        None => {
+            let function = Value::Function(parameters, body);
 
-    context.define_variable(name, function.clone());
-    function
+            context.define_variable(name, function.clone());
+            function
+        }
+    }
 }
 
 fn interpret_function_call(
     context: Rc<Context>,
     callee: &Expression,
     arguments: Vec<Expression>,
+    position: &Position,
 ) -> Value {
     let callee = interpret_expression(context.clone(), callee);
     let arguments: Vec<Value> = arguments
@@ -295,14 +339,17 @@ fn interpret_function_call(
                 Value::Return(value) => *value,
                 value => value,
             }
-         
         }
         Value::NativeFunction(function) => function(arguments),
-        _ => panic!("Invalid function call"),
+        _ => panic_unexpected_value(callee, position, "function or native function"),
     }
 }
 
-fn interpret_block(context: Rc<Context>, expressions: Vec<Expression>) -> Value {
+fn interpret_block(
+    context: Rc<Context>,
+    expressions: Vec<Expression>,
+    position: &Position,
+) -> Value {
     let block_context = Rc::new(Context::new(Some(context.clone())));
 
     let mut value = Value::Null;
@@ -310,7 +357,7 @@ fn interpret_block(context: Rc<Context>, expressions: Vec<Expression>) -> Value 
     for expression in expressions {
         value = interpret_expression(block_context.clone(), &expression);
         match value {
-            Value::Return(_) => return value,
+            Value::Return(_) => break,
             _ => (),
         }
     }
@@ -324,6 +371,7 @@ fn interpret_if(
     then_branch: &Expression,
     elseif_branches: Vec<(Expression, Expression)>,
     else_branch: Option<Expression>,
+    position: &Position,
 ) -> Value {
     if let Value::Boolean(true) = interpret_expression(context.clone(), condition) {
         return interpret_expression(context.clone(), then_branch);
@@ -342,10 +390,25 @@ fn interpret_if(
     Value::Null
 }
 
-fn interpret_while(context: Rc<Context>, condition: &Expression, body: &Expression) -> Value {
+fn interpret_while(
+    context: Rc<Context>,
+    condition: &Expression,
+    body: &Expression,
+    position: &Position,
+) -> Value {
     let mut list = vec![];
     while let Value::Boolean(true) = interpret_expression(context.clone(), condition) {
-        list.push(interpret_expression(context.clone(), body));
+        let value = interpret_expression(context.clone(), body);
+        list.push(value.clone());
+        match value {
+            Value::Break(_) => {
+                break;
+            }
+            Value::Continue(_) => {
+                continue;
+            }
+            _ => {}
+        };
     }
 
     Value::List(list)
@@ -357,6 +420,7 @@ fn interpret_for(
     condition: &Expression,
     increment: &Expression,
     body: &Expression,
+    position: &Position,
 ) -> Value {
     let mut list = vec![];
     interpret_expression(context.clone(), initializer);
@@ -368,7 +432,7 @@ fn interpret_for(
     Value::List(list)
 }
 
-fn interpret_return(context: Rc<Context>, value: Option<Expression>) -> Value {
+fn interpret_return(context: Rc<Context>, value: Option<Expression>, position: &Position) -> Value {
     let value = match value {
         Some(value) => interpret_expression(context, &value),
         None => Value::Null,
@@ -377,7 +441,7 @@ fn interpret_return(context: Rc<Context>, value: Option<Expression>) -> Value {
     Value::Return(Box::new(value))
 }
 
-fn interpret_break(context: Rc<Context>, value: Option<Expression>) -> Value {
+fn interpret_break(context: Rc<Context>, value: Option<Expression>, position: &Position) -> Value {
     let value = match value {
         Some(value) => interpret_expression(context, &value),
         None => Value::Null,
@@ -386,7 +450,11 @@ fn interpret_break(context: Rc<Context>, value: Option<Expression>) -> Value {
     value
 }
 
-fn interpret_continue(context: Rc<Context>, value: Option<Expression>) -> Value {
+fn interpret_continue(
+    context: Rc<Context>,
+    value: Option<Expression>,
+    position: &Position,
+) -> Value {
     let value = match value {
         Some(value) => interpret_expression(context, &value),
         None => Value::Null,
@@ -395,18 +463,38 @@ fn interpret_continue(context: Rc<Context>, value: Option<Expression>) -> Value 
     value
 }
 
-fn interpret_list_index(context: Rc<Context>, list: &Expression, index: &Expression) -> Value {
-    let list = interpret_expression(context.clone(), list);
-    let index = interpret_expression(context.clone(), index);
+fn interpret_list_index(
+    context: Rc<Context>,
+    list: &Expression,
+    index: &Expression,
+    position: &Position,
+) -> Value {
+    let list_value = interpret_expression(context.clone(), list);
+    let index_value = interpret_expression(context.clone(), index);
 
-    match (list, index) {
+    match list_value {
+        Value::List(_) => {}
+        _ => panic_unexpected_value(list_value, &list.position, "list"),
+    }
+
+    match index_value {
+        Value::Integer(_) => {}
+        _ => panic_unexpected_value(index_value, &index.position, "integer list index"),
+    }
+
+    match (list_value, index_value) {
         (Value::List(list), Value::Integer(index)) => list[index as usize].clone(),
-        _ => panic!("Invalid list index"),
+        _ => panic!("Invalid list index at {}", position),
     }
 }
 
-fn interpret_import(context: Rc<Context>, path: &str) -> Value {
-    let contents = std::fs::read_to_string(path).expect("Unable to read file");
+fn interpret_import(context: Rc<Context>, path: &str, position: &Position) -> Value {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(e) => {
+            panic!("Failed to import file {} at {}: {}", path, position, e)
+        }
+    };
     let tokens = crate::tokenizer::tokenize(&contents, path);
     let ast = crate::parser::parse(tokens);
 
@@ -420,6 +508,7 @@ fn interpret_expression(context: Rc<Context>, expression: &Expression) -> Value 
         ExpressionKind::String(s) => Value::String(s.to_owned()),
         ExpressionKind::Character(c) => Value::Character(*c),
         ExpressionKind::Boolean(b) => Value::Boolean(*b),
+        ExpressionKind::Null => Value::Null,
         ExpressionKind::Variable(name) => match context.get_variable(name) {
             Some(value) => value,
             None => panic!("Variable {} not found", name),
@@ -430,26 +519,38 @@ fn interpret_expression(context: Rc<Context>, expression: &Expression) -> Value 
                 .map(|e| interpret_expression(context.clone(), e))
                 .collect(),
         ),
-        ExpressionKind::Unary { operator, right } => interpret_unary(context, *operator, &*right),
+        ExpressionKind::Unary { operator, right } => {
+            interpret_unary(context, *operator, &*right, &expression.position)
+        }
         ExpressionKind::Binary {
             left,
             operator,
             right,
-        } => interpret_binary(context, &*left, *operator, &*right),
+        } => interpret_binary(context, &*left, *operator, &*right, &expression.position),
         ExpressionKind::Grouping(expression) => interpret_expression(context, expression),
         ExpressionKind::VariableDefinition { name, initializer } => {
-            interpret_variable_definition(context, name, *initializer.clone())
+            interpret_variable_definition(context, name, *initializer.clone(), &expression.position)
         }
-        ExpressionKind::Assignment { name, value } => interpret_assignment(context, name, &*value),
+        ExpressionKind::Assignment { name, value } => {
+            interpret_assignment(context, name, &*value, &expression.position)
+        }
         ExpressionKind::FunctionDefinition {
             name,
             parameters,
             body,
-        } => interpret_function_definition(context, name, parameters.to_vec(), *body.to_owned()),
+        } => interpret_function_definition(
+            context,
+            name,
+            parameters.to_vec(),
+            *body.to_owned(),
+            &expression.position,
+        ),
         ExpressionKind::FunctionCall { callee, arguments } => {
-            interpret_function_call(context, callee, arguments.to_vec())
+            interpret_function_call(context, callee, arguments.to_vec(), &expression.position)
         }
-        ExpressionKind::Block { expressions } => interpret_block(context, expressions.to_vec()),
+        ExpressionKind::Block { expressions } => {
+            interpret_block(context, expressions.to_vec(), &expression.position)
+        }
         ExpressionKind::If {
             condition,
             then_branch,
@@ -461,19 +562,39 @@ fn interpret_expression(context: Rc<Context>, expression: &Expression) -> Value 
             &then_branch.to_owned(),
             elseif_branches.to_vec(),
             *else_branch.to_owned(),
+            &expression.position,
         ),
-        ExpressionKind::While { condition, body } => interpret_while(context, condition, body),
+        ExpressionKind::While { condition, body } => {
+            interpret_while(context, condition, body, &expression.position)
+        }
         ExpressionKind::For {
             initializer,
             condition,
             increment,
             body,
-        } => interpret_for(context, initializer, condition, increment, body),
-        ExpressionKind::Return { value } => interpret_return(context, *value.clone()),
-        ExpressionKind::Break { value } => interpret_break(context.clone(), *value.clone()),
-        ExpressionKind::Continue { value } => interpret_continue(context.clone(), *value.clone()),
-        ExpressionKind::ListIndex { list, index } => interpret_list_index(context, list, index),
-        ExpressionKind::Import(filepath) => interpret_import(context.clone(), filepath),
+        } => interpret_for(
+            context,
+            initializer,
+            condition,
+            increment,
+            body,
+            &expression.position,
+        ),
+        ExpressionKind::Return { value } => {
+            interpret_return(context, *value.clone(), &expression.position)
+        }
+        ExpressionKind::Break { value } => {
+            interpret_break(context.clone(), *value.clone(), &expression.position)
+        }
+        ExpressionKind::Continue { value } => {
+            interpret_continue(context.clone(), *value.clone(), &expression.position)
+        }
+        ExpressionKind::ListIndex { list, index } => {
+            interpret_list_index(context, list, index, &expression.position)
+        }
+        ExpressionKind::Import(filepath) => {
+            interpret_import(context.clone(), filepath, &expression.position)
+        }
     }
 }
 
@@ -556,14 +677,16 @@ fn add_native_functions(context: Rc<Context>) {
         "int",
         Value::NativeFunction(|arguments| match &arguments[0] {
             Value::String(s) => Value::Integer(s.parse().unwrap()),
-            _ => panic!("Argument must be a string"),
+            Value::Float(f) => Value::Integer(*f as i64),
+            _ => panic!("Invalid argument type"),
         }),
     );
     context.define_variable(
         "float",
         Value::NativeFunction(|arguments| match &arguments[0] {
             Value::String(s) => Value::Float(s.parse().unwrap()),
-            _ => panic!("Argument must be a string"),
+            Value::Integer(i) => Value::Float(*i as f64),
+            _ => panic!("Invalid argument type"),
         }),
     );
     context.define_variable(
@@ -574,15 +697,15 @@ fn add_native_functions(context: Rc<Context>) {
         "char",
         Value::NativeFunction(|arguments| match &arguments[0] {
             Value::Integer(i) => Value::Character((*i as u8) as char),
-            _ => panic!("Argument must be an integer"),
+            _ => panic!("Invalid argument type"),
         }),
     );
 }
 
-pub fn interpret(ast: Ast) {
+pub fn interpret(ast: Ast) -> Value {
     let context = Rc::new(Context::new(None));
 
     add_native_functions(context.clone());
 
-    interpret_ast(context, ast);
+    interpret_ast(context, ast)
 }
