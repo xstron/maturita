@@ -1,4 +1,5 @@
 use std::fmt::Display;
+use std::process::exit;
 use std::rc::Rc;
 use std::{cell::RefCell, collections::HashMap};
 
@@ -96,10 +97,13 @@ fn add(lhs: Value, rhs: Value, position: &Position) -> Value {
             left.push(Value::new(right));
             Value::new(ValueKind::List(left))
         }
-        (left, right) => panic!(
-            "Invalid operands {} and {} for operator + at {}",
-            left, right, position
-        ),
+        (left, right) => {
+            eprintln!(
+                "Invalid operands {} and {} for operator + at {}",
+                left, right, position
+            );
+            exit(1);
+        }
     }
 }
 
@@ -111,10 +115,13 @@ fn sub(lhs: Value, rhs: Value, position: &Position) -> Value {
         (ValueKind::Float(left), ValueKind::Float(right)) => {
             Value::new(ValueKind::Float(left - right))
         }
-        (left, right) => panic!(
-            "Invalid operands {} and {} for operator - at {}",
-            left, right, position
-        ),
+        (left, right) => {
+            eprintln!(
+                "Invalid operands {} and {} for operator - at {}",
+                left, right, position
+            );
+            exit(1);
+        }
     }
 }
 
@@ -138,10 +145,13 @@ fn mul(lhs: Value, rhs: Value, position: &Position) -> Value {
         (ValueKind::Integer(left), ValueKind::String(right)) => {
             Value::new(ValueKind::String(right.repeat(left as usize)))
         }
-        (left, right) => panic!(
-            "Invalid operands {} and {} for operator * at {}",
-            left, right, position
-        ),
+        (left, right) => {
+            eprintln!(
+                "Invalid operands {} and {} for operator * at {}",
+                left, right, position
+            );
+            exit(1);
+        }
     }
 }
 
@@ -153,10 +163,13 @@ fn div(lhs: Value, rhs: Value, position: &Position) -> Value {
         (ValueKind::Float(left), ValueKind::Float(right)) => {
             Value::new(ValueKind::Float(left / right))
         }
-        (left, right) => panic!(
-            "Invalid operands {} and {} for operator / at {}",
-            left, right, position
-        ),
+        (left, right) => {
+            eprintln!(
+                "Invalid operands {} and {} for operator / at {}",
+                left, right, position
+            );
+            exit(1);
+        }
     }
 }
 
@@ -252,17 +265,19 @@ fn get_value(value: Value) -> Value {
 }
 
 fn panic_unexpected_value(value: Value, position: &Position, expected: &str) -> ! {
-    panic!(
+    eprintln!(
         "Unexpected value: {:?} at {}, expected {}",
         value, position, expected
     );
+    exit(1);
 }
 
 fn panic_unexpected_operator(operator: Operator, position: &Position, expected: &str) -> ! {
-    panic!(
+    eprintln!(
         "Unexpected value: {:?} at {}, expected {}",
         operator, position, expected
     );
+    exit(1);
 }
 
 fn interpret_unary(
@@ -317,10 +332,13 @@ fn interpret_variable_definition(
     position: &Position,
 ) -> Value {
     match context.get_variable(name) {
-        Some(_) => panic!(
-            "Already existing variable \"{}\" being defined again at {}",
-            name, position
-        ),
+        Some(_) => {
+            eprintln!(
+                "Already existing variable \"{}\" being defined again at {}",
+                name, position
+            );
+            exit(1);
+        }
         None => {
             let value = match initializer {
                 Some(initializer) => interpret_expression(context.clone(), &initializer, position),
@@ -345,10 +363,13 @@ fn interpret_assignment(
             context.set_variable(name, value.clone());
             value
         }
-        None => panic!(
-            "Non-existent variable \"{}\" being assigned a value at {}",
-            name, position
-        ),
+        None => {
+            eprintln!(
+                "Non-existent variable \"{}\" being assigned a value at {}",
+                name, position
+            );
+            exit(1);
+        }
     }
 }
 
@@ -360,10 +381,13 @@ fn interpret_function_definition(
     position: &Position,
 ) -> Value {
     match context.get_variable(name) {
-        Some(_) => panic!(
-            "Already existing function \"{}\" being defined again at {}",
-            name, position
-        ),
+        Some(_) => {
+            eprintln!(
+                "Already existing function \"{}\" being defined again at {}",
+                name, position
+            );
+            exit(1);
+        }
         None => {
             let function = Value::new(ValueKind::Function(parameters, body));
 
@@ -390,12 +414,13 @@ fn interpret_function_call(
             let function_context = Rc::new(Context::new(Some(context.clone())));
 
             if arguments.len() != params.len() {
-                panic!(
+                eprintln!(
                     "Expected {} arguments, got {} at {}",
                     params.len(),
                     arguments.len(),
                     position
                 );
+                exit(1);
             }
 
             for (param, arg) in params.iter().zip(arguments) {
@@ -581,7 +606,10 @@ fn interpret_list_index(
         index_value.clone().kind.borrow().to_owned(),
     ) {
         (ValueKind::List(list), ValueKind::Integer(index)) => list[index as usize].clone(),
-        _ => panic!("Invalid list index at {}", position),
+        _ => {
+            eprintln!("Invalid list index at {}", position);
+            exit(1);
+        }
     }
 }
 
@@ -589,7 +617,8 @@ fn interpret_import(context: Rc<Context>, path: &str, position: &Position) -> Va
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(e) => {
-            panic!("Failed to import file \"{}\" at {}: {}", path, position, e)
+            eprintln!("Failed to import file \"{}\" at {}: {}", path, position, e);
+            exit(1);
         }
     };
     let tokens = crate::tokenizer::tokenize(&contents, path);
@@ -612,10 +641,13 @@ fn interpret_expression(
         ExpressionKind::Null => Value::new(ValueKind::Null),
         ExpressionKind::Variable(name) => match context.get_variable(name) {
             Some(value) => value.borrow().clone(),
-            None => panic!(
-                "Non-existent variable \"{}\" being evaluated at {}",
-                name, position
-            ),
+            None => {
+                eprintln!(
+                    "Non-existent variable \"{}\" being evaluated at {}",
+                    name, position
+                );
+                exit(1)
+            }
         },
         ExpressionKind::List(expressions) => Value::new(ValueKind::List(
             expressions
@@ -714,7 +746,7 @@ fn interpret_ast(context: Rc<Context>, ast: Ast) -> Value {
 fn add_native_functions(context: Rc<Context>) {
     context.define_variable(
         "print",
-        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+        Value::new(ValueKind::NativeFunction(|_, arguments, _| {
             for argument in arguments {
                 print!("{} ", argument.kind.borrow().to_owned());
             }
@@ -724,18 +756,22 @@ fn add_native_functions(context: Rc<Context>) {
     );
     context.define_variable(
         "push",
-        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+        Value::new(ValueKind::NativeFunction(|_, arguments, position| {
             if arguments.len() != 2 {
-                panic!(
+                eprintln!(
                     "Expected 2 arguments, got {} at {}",
                     arguments.len(),
                     position
                 );
+                exit(1);
             }
             let mut kind = arguments[0].kind.borrow_mut();
             let mut list = match kind.to_owned() {
                 ValueKind::List(list) => list,
-                _ => panic!("First argument of \"append\" is not a list at {}", position),
+                _ => {
+                    eprintln!("First argument of \"append\" is not a list at {}", position);
+                    exit(1);
+                }
             };
             list.push(arguments[1].clone());
             *kind = ValueKind::List(list);
@@ -744,18 +780,22 @@ fn add_native_functions(context: Rc<Context>) {
     );
     context.define_variable(
         "pop",
-        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+        Value::new(ValueKind::NativeFunction(|_, arguments, position| {
             if arguments.len() != 1 {
-                panic!(
+                eprintln!(
                     "Expected 1 argument, got {} at {}",
                     arguments.len(),
                     position
                 );
+                exit(1);
             }
             let mut kind = arguments[0].kind.borrow_mut();
             let mut list = match kind.to_owned() {
                 ValueKind::List(list) => list,
-                _ => panic!("First argument of \"pop\" is not a list at {}", position),
+                _ => {
+                    eprintln!("First argument of \"pop\" is not a list at {}", position);
+                    exit(1);
+                }
             };
             let popped = list.pop();
             *kind = ValueKind::List(list);
@@ -767,18 +807,22 @@ fn add_native_functions(context: Rc<Context>) {
     );
     context.define_variable(
         "insert",
-        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+        Value::new(ValueKind::NativeFunction(|_, arguments, position| {
             if arguments.len() != 3 {
-                panic!(
+                eprintln!(
                     "Expected 3 arguments, got {} at {}",
                     arguments.len(),
                     position
                 );
+                exit(1);
             }
             let mut kind = arguments[0].kind.borrow_mut();
             let mut list = match kind.to_owned() {
                 ValueKind::List(list) => list,
-                _ => panic!("First argument of \"insert\" is not a list at {}", position),
+                _ => {
+                    eprintln!("First argument of \"insert\" is not a list at {}", position);
+                    exit(1);
+                }
             };
             match arguments[1].kind.borrow().to_owned() {
                 ValueKind::Integer(index) => {
@@ -786,27 +830,34 @@ fn add_native_functions(context: Rc<Context>) {
                     *kind = ValueKind::List(list);
                     arguments[2].clone()
                 }
-                _ => panic!(
-                    "Second argument of \"insert\" is not an integer at {}",
-                    position
-                ),
+                _ => {
+                    eprintln!(
+                        "Second argument of \"insert\" is not an integer at {}",
+                        position
+                    );
+                    exit(1);
+                }
             }
         })),
     );
     context.define_variable(
         "remove",
-        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+        Value::new(ValueKind::NativeFunction(|_, arguments, position| {
             if arguments.len() != 2 {
-                panic!(
+                eprintln!(
                     "Expected 2 arguments, got {} at {}",
                     arguments.len(),
                     position
                 );
+                exit(1);
             }
             let mut kind = arguments[0].kind.borrow_mut();
             let mut list = match kind.to_owned() {
                 ValueKind::List(list) => list,
-                _ => panic!("First argument of \"remove\" is not a list at {}", position),
+                _ => {
+                    eprintln!("First argument of \"remove\" is not a list at {}", position);
+                    exit(1);
+                }
             };
             match arguments[1].kind.borrow().to_owned() {
                 ValueKind::Integer(index) => {
@@ -814,38 +865,46 @@ fn add_native_functions(context: Rc<Context>) {
                     *kind = ValueKind::List(list);
                     removed
                 }
-                _ => panic!(
-                    "Second argument of \"remove\" is not an integer at {}",
-                    position
-                ),
+                _ => {
+                    eprintln!(
+                        "Second argument of \"remove\" is not an integer at {}",
+                        position
+                    );
+                    exit(1);
+                }
             }
         })),
     );
     context.define_variable(
         "len",
-        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+        Value::new(ValueKind::NativeFunction(|_, arguments, position| {
             if arguments.len() != 1 {
-                panic!(
+                eprintln!(
                     "Expected 1 argument, got {} at {}",
                     arguments.len(),
                     position
                 );
+                exit(1);
             }
             match arguments[0].kind.borrow().to_owned() {
                 ValueKind::List(list) => Value::new(ValueKind::Integer(list.len() as i64)),
-                _ => panic!("First argument of \"len\" is not a list at {}", position),
+                _ => {
+                    eprintln!("First argument of \"len\" is not a list at {}", position);
+                    exit(1);
+                }
             }
         })),
     );
     context.define_variable(
         "input",
-        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+        Value::new(ValueKind::NativeFunction(|_, arguments, position| {
             if arguments.len() != 0 {
-                panic!(
+                eprintln!(
                     "Expected 0 arguments, got {} at {}",
                     arguments.len(),
                     position
                 );
+                exit(1);
             }
             let mut input = String::new();
             std::io::stdin().read_line(&mut input).unwrap();
@@ -854,47 +913,56 @@ fn add_native_functions(context: Rc<Context>) {
     );
     context.define_variable(
         "int",
-        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+        Value::new(ValueKind::NativeFunction(|_, arguments, position| {
             if arguments.len() != 1 {
-                panic!(
+                eprintln!(
                     "Expected 1 argument, got {} at {}",
                     arguments.len(),
                     position
                 );
+                exit(1);
             }
             match arguments[0].kind.borrow().to_owned() {
                 ValueKind::String(s) => Value::new(ValueKind::Integer(s.parse().unwrap())),
                 ValueKind::Float(f) => Value::new(ValueKind::Integer(f as i64)),
-                _ => panic!("Invalid argument type"),
+                _ => {
+                    eprintln!("Invalid argument type");
+                    exit(1);
+                }
             }
         })),
     );
     context.define_variable(
         "float",
-        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+        Value::new(ValueKind::NativeFunction(|_, arguments, position| {
             if arguments.len() != 1 {
-                panic!(
+                eprintln!(
                     "Expected 1 argument, got {} at {}",
                     arguments.len(),
                     position
                 );
+                exit(1);
             }
             match arguments[0].kind.borrow().to_owned() {
                 ValueKind::String(s) => Value::new(ValueKind::Float(s.parse().unwrap())),
                 ValueKind::Integer(i) => Value::new(ValueKind::Float(i as f64)),
-                _ => panic!("Invalid argument type"),
+                _ => {
+                    eprintln!("Invalid argument type");
+                    exit(1);
+                }
             }
         })),
     );
     context.define_variable(
         "str",
-        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+        Value::new(ValueKind::NativeFunction(|_, arguments, position| {
             if arguments.len() != 1 {
-                panic!(
+                eprintln!(
                     "Expected 1 argument, got {} at {}",
                     arguments.len(),
                     position
                 );
+                exit(1);
             }
             Value::new(ValueKind::String(
                 arguments[0].kind.borrow().to_owned().to_string(),
@@ -903,17 +971,21 @@ fn add_native_functions(context: Rc<Context>) {
     );
     context.define_variable(
         "char",
-        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+        Value::new(ValueKind::NativeFunction(|_, arguments, position| {
             if arguments.len() != 1 {
-                panic!(
+                eprintln!(
                     "Expected 1 argument, got {} at {}",
                     arguments.len(),
                     position
                 );
+                exit(1);
             }
             match arguments[0].kind.borrow().to_owned() {
                 ValueKind::Integer(i) => Value::new(ValueKind::Character((i as u8) as char)),
-                _ => panic!("Invalid argument type"),
+                _ => {
+                    eprintln!("Invalid argument type");
+                    exit(1);
+                }
             }
         })),
     );

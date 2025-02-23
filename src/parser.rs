@@ -1,3 +1,5 @@
+use std::process::exit;
+
 use crate::tokenizer::{Position, Token, TokenKind};
 
 #[derive(Debug)]
@@ -5,10 +7,16 @@ pub struct Ast {
     pub expressions: Vec<Expression>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Expression {
     pub kind: ExpressionKind,
     pub position: Position,
+}
+
+impl std::fmt::Debug for Expression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Expression").field("kind", &self.kind).finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -229,10 +237,11 @@ fn get_associativity(operator: &Operator) -> OperatorAssociativity {
 type Tokens = std::iter::Peekable<std::vec::IntoIter<Token>>;
 
 fn panic_unexpected_token(token: &Token, expected: &str) -> ! {
-    panic!(
+    eprintln!(
         "Unexpected token: {:?} at {}, expected {}",
         token.kind, token.position, expected
-    )
+    );
+    exit(1);
 }
 
 // Operator precedence parsing
@@ -259,7 +268,8 @@ fn parse_expression_1(tokens: &mut Tokens, min_precedence: OperatorPrecedence) -
             }
         }
         None => {
-            panic!("Unexpected end of input");
+            eprintln!("Unexpected end of input, expected start of expression");
+            exit(1);
         }
     };
 
@@ -456,7 +466,7 @@ fn parse_primary(tokens: &mut Tokens) -> Expression {
             }
         }
         _ => {
-            panic_unexpected_token(&token, "start of primary expression");
+            panic_unexpected_token(&token, "primary expression");
         }
     }
 }
@@ -470,7 +480,10 @@ fn expect_token(tokens: &mut Tokens, expected: TokenKind) -> Token {
             }
             token
         }
-        None => panic!("Unexpected end of input"),
+        None => {
+            eprintln!("Unexpected end of input, expected {:?}", expected);
+            exit(1);
+        },
     }
 }
 
@@ -503,7 +516,8 @@ fn parse_expression_list_until(
         }
     }
     if closed == false && tokens.peek().is_none() {
-        panic!("Unexpected end of input, expected {:?}", end);
+        eprintln!("Unexpected end of input, expected {:?}", end);
+        exit(1);
     }
 
     expressions
@@ -606,7 +620,10 @@ fn parse_if(tokens: &mut Tokens, position: Position) -> Expression {
             Some(_) => {
                 else_branch = Box::new(Some(parse_expression(tokens)));
             }
-            None => panic!("Unexpected end of input"),
+            None => {
+                eprintln!("Unexpected end of input, expected if or expression");
+                exit(1);
+            },
         }
     }
 
