@@ -1,5 +1,4 @@
 use std::fmt::Display;
-use std::ops;
 use std::rc::Rc;
 use std::{cell::RefCell, collections::HashMap};
 
@@ -35,9 +34,9 @@ impl Value {
     }
 }
 
-impl Display for Value {
+impl Display for ValueKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.kind.borrow().to_owned() {
+        match self {
             ValueKind::Null => write!(f, "null"),
             ValueKind::Integer(value) => write!(f, "{}", value),
             ValueKind::Float(value) => write!(f, "{}", value),
@@ -50,114 +49,114 @@ impl Display for Value {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", value)?;
+                    write!(f, "{}", value.kind.borrow().to_owned())?;
                 }
                 write!(f, "]")
             }
             ValueKind::Function(_, _) => write!(f, "<function>"),
             ValueKind::NativeFunction(_) => write!(f, "<native function>"),
-            ValueKind::Return(value) => write!(f, "{}", value),
-            ValueKind::Break(value) => write!(f, "{}", value),
-            ValueKind::Continue(value) => write!(f, "{}", value),
+            ValueKind::Return(value) => write!(f, "{}", value.kind.borrow().to_owned()),
+            ValueKind::Break(value) => write!(f, "{}", value.kind.borrow().to_owned()),
+            ValueKind::Continue(value) => write!(f, "{}", value.kind.borrow().to_owned()),
         }
     }
 }
 
-impl ops::Add<Value> for Value {
-    type Output = Value;
-    fn add(self, rhs: Value) -> Value {
-        match (self.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
-            (ValueKind::Integer(left), ValueKind::Integer(right)) => {
-                Value::new(ValueKind::Integer(left + right))
-            }
-            (ValueKind::Integer(left), ValueKind::Float(right)) => {
-                Value::new(ValueKind::Float(left as f64 + right))
-            }
-            (ValueKind::Float(left), ValueKind::Integer(right)) => {
-                Value::new(ValueKind::Float(left + right as f64))
-            }
-            (ValueKind::Float(left), ValueKind::Float(right)) => {
-                Value::new(ValueKind::Float(left + right))
-            }
-            (ValueKind::String(left), ValueKind::String(right)) => {
-                Value::new(ValueKind::String(left + &right))
-            }
-            (ValueKind::String(left), ValueKind::Character(right)) => {
-                Value::new(ValueKind::String(left + &right.to_string()))
-            }
-            (ValueKind::Character(left), ValueKind::String(right)) => {
-                Value::new(ValueKind::String(left.to_string() + &right))
-            }
-            (ValueKind::Character(left), ValueKind::Character(right)) => {
-                Value::new(ValueKind::String(left.to_string() + &right.to_string()))
-            }
-            (ValueKind::List(mut left), ValueKind::List(right)) => {
-                left.extend(right);
-                Value::new(ValueKind::List(left))
-            }
-            (ValueKind::List(mut left), right) => {
-                left.push(Value::new(right));
-                Value::new(ValueKind::List(left))
-            }
-            _ => panic!("Invalid operands for operator +"),
+fn add(lhs: Value, rhs: Value, position: &Position) -> Value {
+    match (lhs.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
+        (ValueKind::Integer(left), ValueKind::Integer(right)) => {
+            Value::new(ValueKind::Integer(left + right))
         }
+        (ValueKind::Integer(left), ValueKind::Float(right)) => {
+            Value::new(ValueKind::Float(left as f64 + right))
+        }
+        (ValueKind::Float(left), ValueKind::Integer(right)) => {
+            Value::new(ValueKind::Float(left + right as f64))
+        }
+        (ValueKind::Float(left), ValueKind::Float(right)) => {
+            Value::new(ValueKind::Float(left + right))
+        }
+        (ValueKind::String(left), ValueKind::String(right)) => {
+            Value::new(ValueKind::String(left + &right))
+        }
+        (ValueKind::String(left), ValueKind::Character(right)) => {
+            Value::new(ValueKind::String(left + &right.to_string()))
+        }
+        (ValueKind::Character(left), ValueKind::String(right)) => {
+            Value::new(ValueKind::String(left.to_string() + &right))
+        }
+        (ValueKind::Character(left), ValueKind::Character(right)) => {
+            Value::new(ValueKind::String(left.to_string() + &right.to_string()))
+        }
+        (ValueKind::List(mut left), ValueKind::List(right)) => {
+            left.extend(right);
+            Value::new(ValueKind::List(left))
+        }
+        (ValueKind::List(mut left), right) => {
+            left.push(Value::new(right));
+            Value::new(ValueKind::List(left))
+        }
+        (left, right) => panic!(
+            "Invalid operands {} and {} for operator + at {}",
+            left, right, position
+        ),
     }
 }
 
-impl ops::Sub<Value> for Value {
-    type Output = Value;
-    fn sub(self, rhs: Value) -> Value {
-        match (self.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
-            (ValueKind::Integer(left), ValueKind::Integer(right)) => {
-                Value::new(ValueKind::Integer(left - right))
-            }
-            (ValueKind::Float(left), ValueKind::Float(right)) => {
-                Value::new(ValueKind::Float(left - right))
-            }
-            _ => panic!("Invalid operands for operator -"),
+fn sub(lhs: Value, rhs: Value, position: &Position) -> Value {
+    match (lhs.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
+        (ValueKind::Integer(left), ValueKind::Integer(right)) => {
+            Value::new(ValueKind::Integer(left - right))
         }
+        (ValueKind::Float(left), ValueKind::Float(right)) => {
+            Value::new(ValueKind::Float(left - right))
+        }
+        (left, right) => panic!(
+            "Invalid operands {} and {} for operator - at {}",
+            left, right, position
+        ),
     }
 }
 
-impl ops::Mul<Value> for Value {
-    type Output = Value;
-    fn mul(self, rhs: Value) -> Value {
-        match (self.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
-            (ValueKind::Integer(left), ValueKind::Integer(right)) => {
-                Value::new(ValueKind::Integer(left * right))
-            }
-            (ValueKind::Float(left), ValueKind::Integer(right)) => {
-                Value::new(ValueKind::Float(left * right as f64))
-            }
-            (ValueKind::Integer(left), ValueKind::Float(right)) => {
-                Value::new(ValueKind::Float(left as f64 * right))
-            }
-            (ValueKind::Float(left), ValueKind::Float(right)) => {
-                Value::new(ValueKind::Float(left * right))
-            }
-            (ValueKind::String(left), ValueKind::Integer(right)) => {
-                Value::new(ValueKind::String(left.repeat(right as usize)))
-            }
-            (ValueKind::Integer(left), ValueKind::String(right)) => {
-                Value::new(ValueKind::String(right.repeat(left as usize)))
-            }
-            _ => panic!("Invalid operands for operator *"),
+fn mul(lhs: Value, rhs: Value, position: &Position) -> Value {
+    match (lhs.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
+        (ValueKind::Integer(left), ValueKind::Integer(right)) => {
+            Value::new(ValueKind::Integer(left * right))
         }
+        (ValueKind::Float(left), ValueKind::Integer(right)) => {
+            Value::new(ValueKind::Float(left * right as f64))
+        }
+        (ValueKind::Integer(left), ValueKind::Float(right)) => {
+            Value::new(ValueKind::Float(left as f64 * right))
+        }
+        (ValueKind::Float(left), ValueKind::Float(right)) => {
+            Value::new(ValueKind::Float(left * right))
+        }
+        (ValueKind::String(left), ValueKind::Integer(right)) => {
+            Value::new(ValueKind::String(left.repeat(right as usize)))
+        }
+        (ValueKind::Integer(left), ValueKind::String(right)) => {
+            Value::new(ValueKind::String(right.repeat(left as usize)))
+        }
+        (left, right) => panic!(
+            "Invalid operands {} and {} for operator * at {}",
+            left, right, position
+        ),
     }
 }
 
-impl ops::Div<Value> for Value {
-    type Output = Value;
-    fn div(self, rhs: Value) -> Value {
-        match (self.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
-            (ValueKind::Integer(left), ValueKind::Integer(right)) => {
-                Value::new(ValueKind::Integer(left / right))
-            }
-            (ValueKind::Float(left), ValueKind::Float(right)) => {
-                Value::new(ValueKind::Float(left / right))
-            }
-            _ => panic!("Invalid operands for operator /"),
+fn div(lhs: Value, rhs: Value, position: &Position) -> Value {
+    match (lhs.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
+        (ValueKind::Integer(left), ValueKind::Integer(right)) => {
+            Value::new(ValueKind::Integer(left / right))
         }
+        (ValueKind::Float(left), ValueKind::Float(right)) => {
+            Value::new(ValueKind::Float(left / right))
+        }
+        (left, right) => panic!(
+            "Invalid operands {} and {} for operator / at {}",
+            left, right, position
+        ),
     }
 }
 
@@ -303,10 +302,10 @@ fn interpret_binary(
         Operator::LessEqual => Value::new(ValueKind::Boolean(left <= right)),
         Operator::Greater => Value::new(ValueKind::Boolean(left > right)),
         Operator::GreaterEqual => Value::new(ValueKind::Boolean(left >= right)),
-        Operator::Plus => left + right,
-        Operator::Minus => left - right,
-        Operator::Star => left * right,
-        Operator::Slash => left / right,
+        Operator::Plus => add(left, right, position),
+        Operator::Minus => sub(left, right, position),
+        Operator::Star => mul(left, right, position),
+        Operator::Slash => div(left, right, position),
         _ => panic_unexpected_operator(operator, position, "binary operator"),
     }
 }
@@ -389,6 +388,15 @@ fn interpret_function_call(
     match callee.clone().kind.borrow().to_owned() {
         ValueKind::Function(params, body) => {
             let function_context = Rc::new(Context::new(Some(context.clone())));
+
+            if arguments.len() != params.len() {
+                panic!(
+                    "Expected {} arguments, got {} at {}",
+                    params.len(),
+                    arguments.len(),
+                    position
+                );
+            }
 
             for (param, arg) in params.iter().zip(arguments) {
                 function_context.define_variable(&param.to_string(), arg);
@@ -708,7 +716,7 @@ fn add_native_functions(context: Rc<Context>) {
         "print",
         Value::new(ValueKind::NativeFunction(|context, arguments, position| {
             for argument in arguments {
-                print!("{} ", argument);
+                print!("{} ", argument.kind.borrow().to_owned());
             }
             println!();
             Value::new(ValueKind::Null)
@@ -717,6 +725,13 @@ fn add_native_functions(context: Rc<Context>) {
     context.define_variable(
         "push",
         Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            if arguments.len() != 2 {
+                panic!(
+                    "Expected 2 arguments, got {} at {}",
+                    arguments.len(),
+                    position
+                );
+            }
             let mut kind = arguments[0].kind.borrow_mut();
             let mut list = match kind.to_owned() {
                 ValueKind::List(list) => list,
@@ -730,6 +745,13 @@ fn add_native_functions(context: Rc<Context>) {
     context.define_variable(
         "pop",
         Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            if arguments.len() != 1 {
+                panic!(
+                    "Expected 1 argument, got {} at {}",
+                    arguments.len(),
+                    position
+                );
+            }
             let mut kind = arguments[0].kind.borrow_mut();
             let mut list = match kind.to_owned() {
                 ValueKind::List(list) => list,
@@ -746,6 +768,13 @@ fn add_native_functions(context: Rc<Context>) {
     context.define_variable(
         "insert",
         Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            if arguments.len() != 3 {
+                panic!(
+                    "Expected 3 arguments, got {} at {}",
+                    arguments.len(),
+                    position
+                );
+            }
             let mut kind = arguments[0].kind.borrow_mut();
             let mut list = match kind.to_owned() {
                 ValueKind::List(list) => list,
@@ -767,6 +796,13 @@ fn add_native_functions(context: Rc<Context>) {
     context.define_variable(
         "remove",
         Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            if arguments.len() != 2 {
+                panic!(
+                    "Expected 2 arguments, got {} at {}",
+                    arguments.len(),
+                    position
+                );
+            }
             let mut kind = arguments[0].kind.borrow_mut();
             let mut list = match kind.to_owned() {
                 ValueKind::List(list) => list,
@@ -787,16 +823,30 @@ fn add_native_functions(context: Rc<Context>) {
     );
     context.define_variable(
         "len",
-        Value::new(ValueKind::NativeFunction(
-            |context, arguments, position| match arguments[0].kind.borrow().to_owned() {
+        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            if arguments.len() != 1 {
+                panic!(
+                    "Expected 1 argument, got {} at {}",
+                    arguments.len(),
+                    position
+                );
+            }
+            match arguments[0].kind.borrow().to_owned() {
                 ValueKind::List(list) => Value::new(ValueKind::Integer(list.len() as i64)),
                 _ => panic!("First argument of \"len\" is not a list at {}", position),
-            },
-        )),
+            }
+        })),
     );
     context.define_variable(
         "input",
         Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            if arguments.len() != 0 {
+                panic!(
+                    "Expected 0 arguments, got {} at {}",
+                    arguments.len(),
+                    position
+                );
+            }
             let mut input = String::new();
             std::io::stdin().read_line(&mut input).unwrap();
             Value::new(ValueKind::String(input.trim().to_owned()))
@@ -804,38 +854,68 @@ fn add_native_functions(context: Rc<Context>) {
     );
     context.define_variable(
         "int",
-        Value::new(ValueKind::NativeFunction(
-            |context, arguments, position| match arguments[0].kind.borrow().to_owned() {
+        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            if arguments.len() != 1 {
+                panic!(
+                    "Expected 1 argument, got {} at {}",
+                    arguments.len(),
+                    position
+                );
+            }
+            match arguments[0].kind.borrow().to_owned() {
                 ValueKind::String(s) => Value::new(ValueKind::Integer(s.parse().unwrap())),
                 ValueKind::Float(f) => Value::new(ValueKind::Integer(f as i64)),
                 _ => panic!("Invalid argument type"),
-            },
-        )),
+            }
+        })),
     );
     context.define_variable(
         "float",
-        Value::new(ValueKind::NativeFunction(
-            |context, arguments, position| match arguments[0].kind.borrow().to_owned() {
+        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            if arguments.len() != 1 {
+                panic!(
+                    "Expected 1 argument, got {} at {}",
+                    arguments.len(),
+                    position
+                );
+            }
+            match arguments[0].kind.borrow().to_owned() {
                 ValueKind::String(s) => Value::new(ValueKind::Float(s.parse().unwrap())),
                 ValueKind::Integer(i) => Value::new(ValueKind::Float(i as f64)),
                 _ => panic!("Invalid argument type"),
-            },
-        )),
+            }
+        })),
     );
     context.define_variable(
         "str",
         Value::new(ValueKind::NativeFunction(|context, arguments, position| {
-            Value::new(ValueKind::String(arguments[0].to_string()))
+            if arguments.len() != 1 {
+                panic!(
+                    "Expected 1 argument, got {} at {}",
+                    arguments.len(),
+                    position
+                );
+            }
+            Value::new(ValueKind::String(
+                arguments[0].kind.borrow().to_owned().to_string(),
+            ))
         })),
     );
     context.define_variable(
         "char",
-        Value::new(ValueKind::NativeFunction(
-            |context, arguments, position| match arguments[0].kind.borrow().to_owned() {
+        Value::new(ValueKind::NativeFunction(|context, arguments, position| {
+            if arguments.len() != 1 {
+                panic!(
+                    "Expected 1 argument, got {} at {}",
+                    arguments.len(),
+                    position
+                );
+            }
+            match arguments[0].kind.borrow().to_owned() {
                 ValueKind::Integer(i) => Value::new(ValueKind::Character((i as u8) as char)),
                 _ => panic!("Invalid argument type"),
-            },
-        )),
+            }
+        })),
     );
 }
 
