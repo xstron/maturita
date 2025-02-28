@@ -15,7 +15,9 @@ pub struct Expression {
 
 impl std::fmt::Debug for Expression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Expression").field("kind", &self.kind).finish()
+        f.debug_struct("Expression")
+            .field("kind", &self.kind)
+            .finish()
     }
 }
 
@@ -244,7 +246,59 @@ fn panic_unexpected_token(token: &Token, expected: &str) -> ! {
     exit(1);
 }
 
-// Operator precedence parsing
+fn expect_token(tokens: &mut Tokens, expected: TokenKind) -> Token {
+    match tokens.next() {
+        Some(token) => {
+            // std::mem::discriminant is used to compare enum variants without comparing their data
+            if std::mem::discriminant(&token.kind) != std::mem::discriminant(&expected) {
+                panic_unexpected_token(&token, format!("{:?}", expected).as_str());
+            }
+            token
+        }
+        None => {
+            eprintln!("Unexpected end of input, expected {:?}", expected);
+            exit(1);
+        }
+    }
+}
+
+fn parse_optional_expression(tokens: &mut Tokens) -> Option<Expression> {
+    match tokens.peek() {
+        Some(&Token {
+            kind: TokenKind::SemiColon,
+            ..
+        }) => None,
+        _ => Some(parse_expression(tokens)),
+    }
+}
+
+fn parse_expression_list_until(
+    tokens: &mut Tokens,
+    separator: TokenKind,
+    end: TokenKind,
+) -> Vec<Expression> {
+    let mut expressions = Vec::<Expression>::new();
+    let mut closed = false;
+
+    while let Some(token) = tokens.peek() {
+        if token.kind == end {
+            closed = true;
+            break;
+        } else if token.kind == separator {
+            tokens.next();
+        } else {
+            expressions.push(parse_expression(tokens));
+        }
+    }
+    if closed == false && tokens.peek().is_none() {
+        eprintln!("Unexpected end of input, expected {:?}", end);
+        exit(1);
+    }
+
+    expressions
+}
+
+// Operator-precedence parser expanded with prefix and postfix operators
 fn parse_expression(tokens: &mut Tokens) -> Expression {
     parse_expression_1(tokens, OperatorPrecedence::Equality)
 }
@@ -471,58 +525,6 @@ fn parse_primary(tokens: &mut Tokens) -> Expression {
     }
 }
 
-fn expect_token(tokens: &mut Tokens, expected: TokenKind) -> Token {
-    match tokens.next() {
-        Some(token) => {
-            // std::mem::discriminant is used to compare enum variants without comparing their data
-            if std::mem::discriminant(&token.kind) != std::mem::discriminant(&expected) {
-                panic_unexpected_token(&token, format!("{:?}", expected).as_str());
-            }
-            token
-        }
-        None => {
-            eprintln!("Unexpected end of input, expected {:?}", expected);
-            exit(1);
-        },
-    }
-}
-
-fn parse_optional_expression(tokens: &mut Tokens) -> Option<Expression> {
-    match tokens.peek() {
-        Some(&Token {
-            kind: TokenKind::SemiColon,
-            ..
-        }) => None,
-        _ => Some(parse_expression(tokens)),
-    }
-}
-
-fn parse_expression_list_until(
-    tokens: &mut Tokens,
-    separator: TokenKind,
-    end: TokenKind,
-) -> Vec<Expression> {
-    let mut expressions = Vec::<Expression>::new();
-    let mut closed = false;
-
-    while let Some(token) = tokens.peek() {
-        if token.kind == end {
-            closed = true;
-            break;
-        } else if token.kind == separator {
-            tokens.next();
-        } else {
-            expressions.push(parse_expression(tokens));
-        }
-    }
-    if closed == false && tokens.peek().is_none() {
-        eprintln!("Unexpected end of input, expected {:?}", end);
-        exit(1);
-    }
-
-    expressions
-}
-
 fn parse_variable_definition(tokens: &mut Tokens, position: Position) -> Expression {
     let name = match expect_token(tokens, TokenKind::Identifier(String::new())) {
         token => match token.kind {
@@ -623,7 +625,7 @@ fn parse_if(tokens: &mut Tokens, position: Position) -> Expression {
             None => {
                 eprintln!("Unexpected end of input, expected if or expression");
                 exit(1);
-            },
+            }
         }
     }
 

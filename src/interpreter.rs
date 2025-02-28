@@ -33,6 +33,19 @@ impl Value {
             kind: Rc::new(RefCell::new(kind)),
         }
     }
+
+    fn get(&self) -> ValueKind {
+        self.kind.borrow().to_owned()
+    }
+
+    fn unwrap_flow_control(self) -> Value {
+        match self.get() {
+            ValueKind::Return(value) => value.unwrap_flow_control(),
+            ValueKind::Break(value) => value.unwrap_flow_control(),
+            ValueKind::Continue(value) => value.unwrap_flow_control(),
+            _ => self
+        }
+    }
 }
 
 impl Display for ValueKind {
@@ -50,21 +63,21 @@ impl Display for ValueKind {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", value.kind.borrow().to_owned())?;
+                    write!(f, "{}", value.get())?;
                 }
                 write!(f, "]")
             }
             ValueKind::Function(_, _) => write!(f, "<function>"),
             ValueKind::NativeFunction(_) => write!(f, "<native function>"),
-            ValueKind::Return(value) => write!(f, "{}", value.kind.borrow().to_owned()),
-            ValueKind::Break(value) => write!(f, "{}", value.kind.borrow().to_owned()),
-            ValueKind::Continue(value) => write!(f, "{}", value.kind.borrow().to_owned()),
+            ValueKind::Return(value) => write!(f, "{}", value.get()),
+            ValueKind::Break(value) => write!(f, "{}", value.get()),
+            ValueKind::Continue(value) => write!(f, "{}", value.get()),
         }
     }
 }
 
 fn add(lhs: Value, rhs: Value, position: &Position) -> Value {
-    match (lhs.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
+    match (lhs.get(), rhs.get()) {
         (ValueKind::Integer(left), ValueKind::Integer(right)) => {
             Value::new(ValueKind::Integer(left + right))
         }
@@ -108,7 +121,7 @@ fn add(lhs: Value, rhs: Value, position: &Position) -> Value {
 }
 
 fn sub(lhs: Value, rhs: Value, position: &Position) -> Value {
-    match (lhs.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
+    match (lhs.get(), rhs.get()) {
         (ValueKind::Integer(left), ValueKind::Integer(right)) => {
             Value::new(ValueKind::Integer(left - right))
         }
@@ -126,7 +139,7 @@ fn sub(lhs: Value, rhs: Value, position: &Position) -> Value {
 }
 
 fn mul(lhs: Value, rhs: Value, position: &Position) -> Value {
-    match (lhs.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
+    match (lhs.get(), rhs.get()) {
         (ValueKind::Integer(left), ValueKind::Integer(right)) => {
             Value::new(ValueKind::Integer(left * right))
         }
@@ -156,7 +169,7 @@ fn mul(lhs: Value, rhs: Value, position: &Position) -> Value {
 }
 
 fn div(lhs: Value, rhs: Value, position: &Position) -> Value {
-    match (lhs.kind.borrow().to_owned(), rhs.kind.borrow().to_owned()) {
+    match (lhs.get(), rhs.get()) {
         (ValueKind::Integer(left), ValueKind::Integer(right)) => {
             Value::new(ValueKind::Integer(left / right))
         }
@@ -176,8 +189,8 @@ fn div(lhs: Value, rhs: Value, position: &Position) -> Value {
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (
-            self.kind.borrow().to_owned(),
-            other.kind.borrow().to_owned(),
+            self.get(),
+            other.get(),
         ) {
             (ValueKind::Null, ValueKind::Null) => true,
             (ValueKind::Integer(left), ValueKind::Integer(right)) => left == right,
@@ -194,8 +207,8 @@ impl PartialEq for Value {
 impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         match (
-            self.kind.borrow().to_owned(),
-            other.kind.borrow().to_owned(),
+            self.get(),
+            other.get(),
         ) {
             (ValueKind::Integer(left), ValueKind::Integer(right)) => left.partial_cmp(&right),
             (ValueKind::Float(left), ValueKind::Integer(right)) => {
@@ -214,7 +227,7 @@ impl PartialOrd for Value {
 
 #[derive(Debug)]
 pub struct Context {
-    variables: Rc<RefCell<HashMap<String, Rc<RefCell<Value>>>>>,
+    variables: Rc<RefCell<HashMap<String, Value>>>,
     parent: Option<Rc<Context>>,
 }
 
@@ -226,7 +239,7 @@ impl Context {
         }
     }
 
-    fn get_variable(&self, name: &str) -> Option<Rc<RefCell<Value>>> {
+    fn get_variable(&self, name: &str) -> Option<Value> {
         match self.variables.borrow().get(name) {
             Some(value) => Some(value.clone()),
             None => match &self.parent {
@@ -238,8 +251,9 @@ impl Context {
 
     fn set_variable(&self, name: &str, value: Value) {
         if self.variables.borrow().contains_key(name) {
-            let val = self.variables.borrow().get(name).unwrap().clone();
-            *val.borrow_mut() = value;
+            self.variables
+                .borrow_mut()
+                .insert(name.to_owned(), value);
         } else {
             match &self.parent {
                 Some(parent) => parent.set_variable(name, value),
@@ -251,16 +265,7 @@ impl Context {
     fn define_variable(&self, name: &str, value: Value) {
         self.variables
             .borrow_mut()
-            .insert(name.to_owned(), Rc::new(RefCell::new(value)));
-    }
-}
-
-fn get_value(value: Value) -> Value {
-    match value.kind.borrow().to_owned() {
-        ValueKind::Return(val) => get_value(*val),
-        ValueKind::Break(val) => get_value(*val),
-        ValueKind::Continue(val) => get_value(*val),
-        _ => value.clone(),
+            .insert(name.to_owned(), value);
     }
 }
 
@@ -288,12 +293,12 @@ fn interpret_unary(
 ) -> Value {
     let value = interpret_expression(context.clone(), right, position);
     match operator {
-        Operator::MinusUnary => match value.kind.borrow().to_owned() {
+        Operator::MinusUnary => match value.get() {
             ValueKind::Integer(value) => Value::new(ValueKind::Integer(-value)),
             ValueKind::Float(value) => Value::new(ValueKind::Float(-value)),
             _ => panic_unexpected_value(value.clone(), &right.position, "numeric type"),
         },
-        Operator::Bang => match value.kind.borrow().to_owned() {
+        Operator::Bang => match value.get() {
             ValueKind::Boolean(value) => Value::new(ValueKind::Boolean(!value)),
             _ => panic_unexpected_value(value.clone(), &right.position, "boolean"),
         },
@@ -409,7 +414,7 @@ fn interpret_function_call(
         .map(|arg| interpret_expression(context.clone(), arg, position))
         .collect();
 
-    match callee.clone().kind.borrow().to_owned() {
+    match callee.clone().get() {
         ValueKind::Function(params, body) => {
             let function_context = Rc::new(Context::new(Some(context.clone())));
 
@@ -427,7 +432,7 @@ fn interpret_function_call(
                 function_context.define_variable(&param.to_string(), arg);
             }
 
-            get_value(interpret_expression(function_context, &body, position))
+            interpret_expression(function_context, &body, position).unwrap_flow_control()
         }
         ValueKind::NativeFunction(function) => function(context.clone(), arguments, position),
         _ => panic_unexpected_value(callee.clone(), position, "function or native function"),
@@ -445,7 +450,7 @@ fn interpret_block(
 
     for expression in expressions {
         value = interpret_expression(block_context.clone(), &expression, position);
-        match value.kind.borrow().to_owned() {
+        match value.get() {
             ValueKind::Return(_) | ValueKind::Break(_) | ValueKind::Continue(_) => break,
             _ => {}
         }
@@ -501,8 +506,8 @@ fn interpret_while(
         .to_owned()
     {
         let value = interpret_expression(context.clone(), body, position);
-        list.push(get_value(value.clone()));
-        match value.kind.borrow().to_owned() {
+        list.push(value.clone().unwrap_flow_control());
+        match value.get() {
             ValueKind::Return(_) => {
                 return value.clone();
             }
@@ -535,8 +540,8 @@ fn interpret_for(
         .to_owned()
     {
         let value = interpret_expression(context.clone(), body, position);
-        list.push(get_value(value.clone()));
-        match value.kind.borrow().to_owned() {
+        list.push(value.clone().unwrap_flow_control());
+        match value.get() {
             ValueKind::Return(_) => {
                 return value.clone();
             }
@@ -591,19 +596,19 @@ fn interpret_list_index(
     let list_value = interpret_expression(context.clone(), list, position);
     let index_value = interpret_expression(context.clone(), index, position);
 
-    match list_value.kind.borrow().to_owned() {
+    match list_value.get() {
         ValueKind::List(_) => {}
         _ => panic_unexpected_value(list_value.clone(), &list.position, "list"),
     }
 
-    match index_value.kind.borrow().to_owned() {
+    match index_value.get() {
         ValueKind::Integer(_) => {}
         _ => panic_unexpected_value(index_value.clone(), &index.position, "integer list index"),
     }
 
     match (
-        list_value.clone().kind.borrow().to_owned(),
-        index_value.clone().kind.borrow().to_owned(),
+        list_value.clone().get(),
+        index_value.clone().get(),
     ) {
         (ValueKind::List(list), ValueKind::Integer(index)) => list[index as usize].clone(),
         _ => {
@@ -640,7 +645,7 @@ fn interpret_expression(
         ExpressionKind::Boolean(b) => Value::new(ValueKind::Boolean(*b)),
         ExpressionKind::Null => Value::new(ValueKind::Null),
         ExpressionKind::Variable(name) => match context.get_variable(name) {
-            Some(value) => value.borrow().clone(),
+            Some(value) => value,
             None => {
                 eprintln!(
                     "Non-existent variable \"{}\" being evaluated at {}",
@@ -748,7 +753,7 @@ fn add_native_functions(context: Rc<Context>) {
         "print",
         Value::new(ValueKind::NativeFunction(|_, arguments, _| {
             for argument in arguments {
-                print!("{} ", argument.kind.borrow().to_owned());
+                print!("{} ", argument.get());
             }
             println!();
             Value::new(ValueKind::Null)
@@ -824,7 +829,7 @@ fn add_native_functions(context: Rc<Context>) {
                     exit(1);
                 }
             };
-            match arguments[1].kind.borrow().to_owned() {
+            match arguments[1].get() {
                 ValueKind::Integer(index) => {
                     list.insert(index as usize, arguments[2].clone());
                     *kind = ValueKind::List(list);
@@ -859,7 +864,7 @@ fn add_native_functions(context: Rc<Context>) {
                     exit(1);
                 }
             };
-            match arguments[1].kind.borrow().to_owned() {
+            match arguments[1].get() {
                 ValueKind::Integer(index) => {
                     let removed = list.remove(index as usize);
                     *kind = ValueKind::List(list);
@@ -886,7 +891,7 @@ fn add_native_functions(context: Rc<Context>) {
                 );
                 exit(1);
             }
-            match arguments[0].kind.borrow().to_owned() {
+            match arguments[0].get() {
                 ValueKind::List(list) => Value::new(ValueKind::Integer(list.len() as i64)),
                 _ => {
                     eprintln!("First argument of \"len\" is not a list at {}", position);
@@ -922,7 +927,7 @@ fn add_native_functions(context: Rc<Context>) {
                 );
                 exit(1);
             }
-            match arguments[0].kind.borrow().to_owned() {
+            match arguments[0].get() {
                 ValueKind::String(s) => Value::new(ValueKind::Integer(s.parse().unwrap())),
                 ValueKind::Float(f) => Value::new(ValueKind::Integer(f as i64)),
                 _ => {
@@ -943,7 +948,7 @@ fn add_native_functions(context: Rc<Context>) {
                 );
                 exit(1);
             }
-            match arguments[0].kind.borrow().to_owned() {
+            match arguments[0].get() {
                 ValueKind::String(s) => Value::new(ValueKind::Float(s.parse().unwrap())),
                 ValueKind::Integer(i) => Value::new(ValueKind::Float(i as f64)),
                 _ => {
@@ -965,7 +970,7 @@ fn add_native_functions(context: Rc<Context>) {
                 exit(1);
             }
             Value::new(ValueKind::String(
-                arguments[0].kind.borrow().to_owned().to_string(),
+                arguments[0].get().to_string(),
             ))
         })),
     );
@@ -980,7 +985,7 @@ fn add_native_functions(context: Rc<Context>) {
                 );
                 exit(1);
             }
-            match arguments[0].kind.borrow().to_owned() {
+            match arguments[0].get() {
                 ValueKind::Integer(i) => Value::new(ValueKind::Character((i as u8) as char)),
                 _ => {
                     eprintln!("Invalid argument type");

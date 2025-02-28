@@ -1,4 +1,7 @@
-use std::{fmt::{Debug, Display}, process::exit};
+use std::{
+    fmt::{Debug, Display},
+    process::exit,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Token {
@@ -84,6 +87,8 @@ pub fn tokenize(src: &str, file_path: &str) -> Vec<Token> {
             ']' => kind = TokenKind::BracketRight,
             '{' => kind = TokenKind::BraceLeft,
             '}' => kind = TokenKind::BraceRight,
+            // With characters that appear at the start of multiple tokens,
+            // we always choose the token that consumes the most characters
             '=' => match chars.peek() {
                 Some(&'=') => {
                     let _ = chars.next();
@@ -122,6 +127,8 @@ pub fn tokenize(src: &str, file_path: &str) -> Vec<Token> {
             '/' => kind = TokenKind::Slash,
             ',' => kind = TokenKind::Comma,
             ';' => kind = TokenKind::SemiColon,
+            // Identifiers can contain letters, numbers, and underscores,
+            // but cannot start with a number
             'a'..='z' | 'A'..='Z' | '_' => {
                 let mut ident = String::new();
                 ident.push(c);
@@ -134,6 +141,7 @@ pub fn tokenize(src: &str, file_path: &str) -> Vec<Token> {
                         _ => break,
                     }
                 }
+                // Each keyword is its own token type for ease of parsing later
                 match ident.as_str() {
                     "var" => kind = TokenKind::Var,
                     "func" => kind = TokenKind::Func,
@@ -151,6 +159,7 @@ pub fn tokenize(src: &str, file_path: &str) -> Vec<Token> {
                     _ => kind = TokenKind::Identifier(ident),
                 }
             }
+            // Currently, this does not support bases other than 10
             '0'..='9' => {
                 let mut num = String::new();
                 num.push(c);
@@ -240,6 +249,7 @@ pub fn tokenize(src: &str, file_path: &str) -> Vec<Token> {
                 column += 1;
                 continue;
             }
+            // Comments skip all characters until the end of the line
             '#' => {
                 while let Some(&c) = chars.peek() {
                     if c == '\n' {
